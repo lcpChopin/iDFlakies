@@ -209,7 +209,6 @@ public class SootAnalysis {
                         reportFieldRefInfo(stmt, affectedClasses);
                 }
             } catch (Exception e) {
-                // System.out.println("LIKELY ERROR: cannot get resident body for phantom method");
                 e.printStackTrace();
             }
         }

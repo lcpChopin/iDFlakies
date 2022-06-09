@@ -135,13 +135,7 @@ public class IncDetectorMojo extends DetectorMojo {
 
     protected boolean selectBasedOnMethodsCallUpgrade;
 
-    protected boolean removeBasedOnMethodsCall;
-
-    protected boolean fineGranularity;
-
     protected boolean detectOrNot;
-
-    protected int distance;
 
     protected String ekstaziSelectedTestsFile;
 
@@ -154,9 +148,7 @@ public class IncDetectorMojo extends DetectorMojo {
     protected boolean isEkstazi;
 
     private Set<String> affectedTestClasses;
-
-    protected List<String> selectedTests;
-
+    
     private static Set<String> immutableList;
 
     @Override
@@ -333,9 +325,7 @@ public class IncDetectorMojo extends DetectorMojo {
                     }
                     processedClasses.add(dependency);
                 } catch (ClassNotFoundException CNFE)  {
-                    // System.out.println("Can not load class. Test dependency skipping: " + dependency);
                 } catch (NoClassDefFoundError NCDFE)  {
-                    // System.out.println("Can not load class. Test dependency skipping: " + dependency);
                 }
 
             }
@@ -481,10 +471,7 @@ public class IncDetectorMojo extends DetectorMojo {
         selectMore = Configuration.config().getProperty("dt.incdetector.selectmore", false);
         selectBasedOnMethodsCall = Configuration.config().getProperty("dt.incdetector.selectonmethods", false);
         selectBasedOnMethodsCallUpgrade = Configuration.config().getProperty("dt.incdetector.selectonmethodsupgrade", false);
-        removeBasedOnMethodsCall = Configuration.config().getProperty("dt.incdetector.removeonmethods", false);
         detectOrNot = Configuration.config().getProperty("dt.incdetector.detectornot", true);
-        fineGranularity = Configuration.config().getProperty("dt.incdetector.finegranularity", false);
-        distance = Configuration.config().getProperty("dt.incdetector.distance", Integer.MAX_VALUE);
         isEkstazi = Configuration.config().getProperty("dt.incdetector.ekstazi", false);
         ekstaziSelectedTestsFile = Configuration.config().getProperty("dt.incdetector.ekstaziselectedtests", "");
         ekstaziDependenciesFile = Configuration.config().getProperty("dt.incdetector.ekstazidependencies", "");;
@@ -574,12 +561,7 @@ public class IncDetectorMojo extends DetectorMojo {
     protected List<String> getTests(
             final MavenProject project,
             TestFramework testFramework) throws IOException {
-        List<String> tests;
-        if (fineGranularity && this.selectedTests != null) {
-            tests = this.selectedTests;
-        } else {
-            tests = getOriginalOrder(project, testFramework, true);
-        }
+        List<String> tests = getOriginalOrder(project, testFramework, true);
         List<String> affectedTests = new ArrayList<>();
 
         String delimiter = testFramework.getDelimiter();
@@ -587,7 +569,6 @@ public class IncDetectorMojo extends DetectorMojo {
             String clazz = test.substring(0, test.lastIndexOf(delimiter));
             if (affectedTestClasses.contains(clazz)) {
                 affectedTests.add(test);
-                // System.out.println("ADD TEST: " + test);
             }
         }
         return affectedTests;
