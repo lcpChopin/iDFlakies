@@ -20,6 +20,8 @@ public abstract class PathManager {
     public static final Path DETECTION_RESULTS = Paths.get("detection-results");
     public static final Path FLAKY_LIST_PATH = Paths.get("flaky-lists.json");
     public static final Path ORIGINAL_ORDER = Paths.get("original-order");
+    public static final Path SELECTED_TESTS = Paths.get("selected-tests");
+    public static final Path TIME = Paths.get("time");
     public static final Path ERROR = Paths.get("error");
     public static final Path ORIGINAL_RESULTS_LOG = Paths.get("original-results-ids");
     public static final Path MVN_TEST_LOG = Paths.get("mvn-test.log");
@@ -52,6 +54,10 @@ public abstract class PathManager {
     public static Path originalOrderPath() {
         return getInstance().originalOrderPathInstance();
     }
+
+    public static Path selectedTestPath() { return getInstance().selectedTestPathInstance(); }
+
+    public static Path timePath() { return getInstance().timePathInstance(); }
 
     public static Path errorPath() {
         return getInstance().errorPathInstance();
@@ -92,6 +98,10 @@ public abstract class PathManager {
     protected abstract Path filterPathInstance(final String detectorType, final String filterType, final int absoluteRound);
 
     protected abstract Path originalOrderPathInstance();
+
+    protected abstract Path selectedTestPathInstance();
+
+    protected abstract Path timePathInstance();
 
     protected abstract Path errorPathInstance();
 

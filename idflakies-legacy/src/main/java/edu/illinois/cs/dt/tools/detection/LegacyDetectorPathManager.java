@@ -61,6 +61,12 @@ public class LegacyDetectorPathManager extends PathManager {
     }
 
     @Override
+    public Path selectedTestPathInstance() { return pathInstance(PathManager.SELECTED_TESTS); }
+
+    @Override
+    public Path timePathInstance() { return pathInstance(PathManager.TIME); }
+
+    @Override
     public Path errorPathInstance() {
         return pathInstance(PathManager.ERROR);
     }
