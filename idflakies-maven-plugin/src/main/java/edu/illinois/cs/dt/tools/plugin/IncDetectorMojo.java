@@ -4,52 +4,52 @@ import edu.illinois.cs.dt.tools.utility.ErrorLogger;
 import edu.illinois.cs.dt.tools.utility.Level;
 import edu.illinois.cs.dt.tools.utility.Logger;
 import edu.illinois.cs.dt.tools.utility.PathManager;
-import edu.illinois.cs.dt.tools.utility.SootAnalysis;
 import edu.illinois.cs.testrunner.configuration.Configuration;
 import edu.illinois.cs.testrunner.data.framework.TestFramework;
-import edu.illinois.starts.data.ZLCFormat;
-import edu.illinois.starts.enums.DependencyFormat;
-import edu.illinois.starts.helpers.Writer;
-import edu.illinois.starts.maven.AgentLoader;
-import edu.illinois.starts.util.Pair;
+import edu.illinois.cs.dt.tools.utility.Pair;
+import org.apache.commons.codec.binary.Hex;
 import org.apache.maven.artifact.DependencyResolutionRequiredException;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugins.annotations.LifecyclePhase;
 import org.apache.maven.plugins.annotations.Mojo;
-import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.plugins.annotations.ResolutionScope;
 import org.apache.maven.project.MavenProject;
 import org.apache.maven.surefire.booter.Classpath;
 import org.apache.maven.surefire.booter.SurefireExecutionException;
 
 import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileReader;
+import java.io.InputStream;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.Arrays;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import static edu.illinois.starts.constants.StartsConstants.CLASSES;
-import static edu.illinois.starts.constants.StartsConstants.COMMA;
-import static edu.illinois.starts.constants.StartsConstants.TRUE;
-import static edu.illinois.starts.constants.StartsConstants.FALSE;
-import static edu.illinois.starts.constants.StartsConstants.JAR_CHECKSUMS;
-import static edu.illinois.starts.constants.StartsConstants.SF_CLASSPATH;
-import static edu.illinois.starts.constants.StartsConstants.STARTS_EXCLUDE_PROPERTY;
-import static edu.illinois.starts.constants.StartsConstants.TEST_CLASSES;
-
 @Mojo(name = "incdetect", defaultPhase = LifecyclePhase.TEST, requiresDependencyResolution = ResolutionScope.TEST)
 public class IncDetectorMojo extends DetectorMojo {
+
+    protected static String CLASSES = "classes";
+    protected static String COMMA = ",";
+    protected static String JAR_CHECKSUMS = "jar-checksums";
+    protected static String SF_CLASSPATH = "sf-classpath";
+    protected static String TEST_CLASSES = "test-classes";
+    private static final String TARGET = "target";
+
     /**
      * The directory in which to store STARTS artifacts that are needed between runs.
      */
@@ -57,83 +57,13 @@ public class IncDetectorMojo extends DetectorMojo {
 
     protected ClassLoader loader;
 
-    /**
-     * Set this to "false" to disable smart hashing, i.e., to *not* strip
-     * Bytecode files of debug info prior to computing checksums. See the "Smart
-     * Checksums" Sections in the Ekstazi paper:
-     * http://dl.acm.org/citation.cfm?id=2771784
-     */
-    @Parameter(property = "cleanBytes", defaultValue = TRUE)
-    protected boolean cleanBytes;
-
-    /**
-     * Allows to switch the format in which we want to store the test dependencies.
-     * A full list of what we currently support can be found in
-     * @see edu.illinois.starts.enums.DependencyFormat
-     */
-    @Parameter(property = "depFormat", defaultValue = "ZLC")
-    protected DependencyFormat depFormat;
-
-    /**
-     * Set this to "false" to not filter out "sun.*" and "java.*" classes from jdeps parsing.
-     */
-    @Parameter(property = "filterLib", defaultValue = TRUE)
-    protected boolean filterLib;
-
-    /**
-     * Path to directory that contains the result of running jdeps on third-party
-     * and standard library jars that an application may need, e.g., those in M2_REPO.
-     */
-    @Parameter(property = "gCache", defaultValue = "${basedir}${file.separator}jdeps-cache")
-    protected String graphCache;
-
-    /**
-     * Output filename for the graph, if printGraph == true.
-     */
-    @Parameter(defaultValue = "graph", readonly = true, required = true)
-    protected String graphFile;
-
     protected List<Pair> jarCheckSums = null;
 
     protected Set<String> nonAffectedTests;
 
-    /**
-     * Set this to "false" to not print the graph obtained from jdeps parsing.
-     * When "true" the graph is written to file after the run.
-     */
-    @Parameter(property = "printGraph", defaultValue = TRUE)
-    protected boolean printGraph;
-
     private Classpath sureFireClassPath;
 
-    private static final String TARGET = "target";
-    /**
-     * Set this to "false" to not add jdeps edges from 3rd party-libraries.
-     */
-    @Parameter(property = "useThirdParty", defaultValue = FALSE)
-    protected boolean useThirdParty;
-
-    /**
-     * Set this to "true" to update test dependencies on disk. The default value of
-     * "false" is useful for "dry runs" where one may want to see the affected
-     * tests, without updating test dependencies.
-     */
-    @Parameter(property = "updateChecksums", defaultValue = FALSE)
-    private boolean updateChecksums;
-
-    /**
-     * Format of the ZLC dependency file deps.zlc
-     * Set to "INDEXED" to store indices of tests
-     * Set to "PLAIN_TEXT" to store full URLs of tests
-     */
-    @Parameter(property = "zlcFormat", defaultValue = "PLAIN_TEXT")
-    protected ZLCFormat zlcFormat;
-
     protected boolean selectMore;
-
-    protected boolean selectBasedOnMethodsCall;
-
-    protected boolean selectBasedOnMethodsCallUpgrade;
 
     protected boolean detectOrNot;
 
@@ -148,7 +78,7 @@ public class IncDetectorMojo extends DetectorMojo {
     protected boolean isEkstazi;
 
     private Set<String> affectedTestClasses;
-    
+
     private static Set<String> immutableList;
 
     @Override
@@ -160,7 +90,9 @@ public class IncDetectorMojo extends DetectorMojo {
         this.coordinates = mavenProject.getGroupId() + ":" + mavenProject.getArtifactId() + ":" + mavenProject.getVersion();
 
         logger.runAndLogError(() -> defineSettings(logger, mavenProject));
-
+        if(this.runner == null) {
+            return;
+        }
         long startTime = System.currentTimeMillis();
         try {
             affectedTestClasses = computeAffectedTests(mavenProject);
@@ -168,11 +100,7 @@ public class IncDetectorMojo extends DetectorMojo {
                 System.out.println("Not detect flaky tests at the first run");
                 return;
             }
-        } catch (IOException e) {
-            e.printStackTrace();
-        } catch (MojoExecutionException e) {
-            e.printStackTrace();
-        } catch (ClassNotFoundException e) {
+        } catch (IOException | MojoExecutionException | ClassNotFoundException e) {
             e.printStackTrace();
         }
         timing(startTime);
@@ -188,8 +116,6 @@ public class IncDetectorMojo extends DetectorMojo {
             return computeEkstaziAffectedTests(project);
         }
 
-        String cpString = Writer.pathToString(sureFireClassPath.getClassPath());
-
         Set<String> affectedTests = new HashSet<>();
 
         if (!detectOrNot) {
@@ -203,6 +129,7 @@ public class IncDetectorMojo extends DetectorMojo {
                 affectedTests.add(str);
             }
         } catch (IOException e) {
+            e.printStackTrace();
         }
 
         if (!selectMore) {
@@ -239,61 +166,6 @@ public class IncDetectorMojo extends DetectorMojo {
         // iter through the affected tests and find what depends on
         Set<String> processedClasses = new HashSet<>();
 
-        // iter through the affected tests and find what depends on
-        Set<String> affectedClasses = new HashSet<>();
-
-        // TODO: not checked yet
-        if (selectBasedOnMethodsCall) {
-            Map<String, List<String>> testClassToMethod = new HashMap<>();
-            List<String> currentTests = super.getTests(project, getTestFramework());
-
-            String delimiter = getTestFramework().getDelimiter();
-            for (String test : currentTests) {
-                String className = test.substring(0, test.lastIndexOf(delimiter));
-                if (!testClassToMethod.containsKey(className)) {
-                    testClassToMethod.put(className, new ArrayList<>());
-                }
-                testClassToMethod.get(className).add(test);
-            }
-
-            Map<String, Set<String>> SootAnalysisTestClassesToClassesSet = new HashMap<>();
-            for (String testClass : testClassToMethod.keySet()) {
-                if(affectedTests.contains(testClass)) {
-                    Set<String> sootNewAffectedClasses = new HashSet<>();
-                    sootNewAffectedClasses = SootAnalysis.analysis(cpString, testClass, testClassToMethod);
-
-                    affectedClasses.addAll(sootNewAffectedClasses);
-                    SootAnalysisTestClassesToClassesSet.put(testClass, sootNewAffectedClasses);
-                }
-            }
-
-            for (String affectedClass : affectedClasses) {
-                if (reverseTransitiveClosure.containsKey(affectedClass)) {
-                    Set<String> additionalAffectedTestClasses = reverseTransitiveClosure.get(affectedClass);
-                    for (String additionalAffectedTestClass : additionalAffectedTestClasses) {
-                        if(selectBasedOnMethodsCallUpgrade) {
-                            Set<String> reachableClassesFromAdditionalAffectedTestClass = new HashSet<>();
-                            if(SootAnalysisTestClassesToClassesSet.containsKey(additionalAffectedTestClass)) {
-                                reachableClassesFromAdditionalAffectedTestClass = SootAnalysisTestClassesToClassesSet.get(additionalAffectedTestClass);
-                            }
-                            else {
-                                reachableClassesFromAdditionalAffectedTestClass = SootAnalysis.analysis(cpString, additionalAffectedTestClass, testClassToMethod);
-                                SootAnalysisTestClassesToClassesSet.put(additionalAffectedTestClass, reachableClassesFromAdditionalAffectedTestClass);
-                            }
-                            if (reachableClassesFromAdditionalAffectedTestClass.contains(affectedClass)) {
-                                additionalTests.add(additionalAffectedTestClass);
-                            }
-                        }
-                        else {
-                            additionalTests.add(additionalAffectedTestClass);
-                        }
-                    }
-                }
-            }
-            affectedTests.addAll(additionalTests);
-            return affectedTests;
-        }
-
         getImmutableList();
         for (String affectedTest : affectedTests) {
             Set<String> dependencies = transitiveClosure.get(affectedTest);
@@ -304,8 +176,6 @@ public class IncDetectorMojo extends DetectorMojo {
                 if (processedClasses.contains(dependency)) {
                     continue;
                 }
-                Set<String> dest = new HashSet<>();
-                dest.add(dependency);
                 try {
                     Class clazz = loader.loadClass(dependency);
                     for (Field field : clazz.getDeclaredFields()) {
@@ -324,8 +194,8 @@ public class IncDetectorMojo extends DetectorMojo {
                         }
                     }
                     processedClasses.add(dependency);
-                } catch (ClassNotFoundException CNFE)  {
-                } catch (NoClassDefFoundError NCDFE)  {
+                } catch (ClassNotFoundException | NoClassDefFoundError e)  {
+                    e.printStackTrace();
                 }
 
             }
@@ -335,22 +205,21 @@ public class IncDetectorMojo extends DetectorMojo {
         return affectedTests;
     }
 
-    private Set<String> computeEkstaziAffectedTests(final MavenProject project) throws IOException, MojoExecutionException, ClassNotFoundException {
-        String cpString = Writer.pathToString(sureFireClassPath.getClassPath());
+    private Set<String> computeEkstaziAffectedTests(final MavenProject project) throws IOException, MojoExecutionException {
+        String cpString = pathToString(sureFireClassPath.getClassPath());
         List<String> sfPathElements = getCleanClassPath(cpString);
 
-        Set<String> allTests = new HashSet<>(getTestClasses(project, getTestFramework()));
+        Set<String> allTests = new HashSet<>(getTestClasses(project, this.runner.framework()));
         Set<String> affectedTests = new HashSet<>();
 
         boolean selectAll = false;
         if (!isSameClassPath(sfPathElements) || !hasSameJarChecksum(sfPathElements)) {
             // Force retestAll because classpath changed since last run
             // don't compute changed and non-affected classes
-            dynamicallyUpdateExcludes(new ArrayList<String>());
             // Make nonAffected empty so dependencies can be updated
             nonAffectedTests = new HashSet<>();
-            Writer.writeClassPath(cpString, artifactsDir);
-            Writer.writeJarChecksums(sfPathElements, artifactsDir, jarCheckSums);
+            writeClassPath(cpString, artifactsDir);
+            writeJarChecksums(sfPathElements, artifactsDir, jarCheckSums);
             selectAll = true;
         }
 
@@ -365,6 +234,7 @@ public class IncDetectorMojo extends DetectorMojo {
                 affectedTests.add(str);
             }
         } catch (IOException e) {
+            e.printStackTrace();
         }
 
         if (!selectMore) {
@@ -430,8 +300,8 @@ public class IncDetectorMojo extends DetectorMojo {
                         }
                     }
                     processedClasses.add(dependency);
-                } catch (ClassNotFoundException CNFE)  {
-                } catch (NoClassDefFoundError NCDFE)  {
+                } catch (ClassNotFoundException | NoClassDefFoundError e)  {
+                    e.printStackTrace();
                 }
             }
         }
@@ -450,7 +320,7 @@ public class IncDetectorMojo extends DetectorMojo {
         }
         long end = System.currentTimeMillis();
         Logger.getGlobal().log(Level.FINE, "[PROFILE] IncDetectorPlugin(createClassLoader): "
-                + Writer.millsToSeconds(end - start));
+                + millsToSeconds(end - start));
         return loader;
     }
 
@@ -459,37 +329,18 @@ public class IncDetectorMojo extends DetectorMojo {
         super.defineSettings(logger, project);
 
         artifactsDir = getArtifactsDir();
-        cleanBytes = true;
-        depFormat = DependencyFormat.ZLC;
-        filterLib = true;
-        graphFile = "graph";
-        graphCache = "jdeps-cache";
-        printGraph = true;
-        updateChecksums = true;
-        useThirdParty = false;
-        zlcFormat = ZLCFormat.PLAIN_TEXT;
         selectMore = Configuration.config().getProperty("dt.incdetector.selectmore", false);
-        selectBasedOnMethodsCall = Configuration.config().getProperty("dt.incdetector.selectonmethods", false);
-        selectBasedOnMethodsCallUpgrade = Configuration.config().getProperty("dt.incdetector.selectonmethodsupgrade", false);
         detectOrNot = Configuration.config().getProperty("dt.incdetector.detectornot", true);
         isEkstazi = Configuration.config().getProperty("dt.incdetector.ekstazi", false);
         ekstaziSelectedTestsFile = Configuration.config().getProperty("dt.incdetector.ekstaziselectedtests", "");
-        ekstaziDependenciesFile = Configuration.config().getProperty("dt.incdetector.ekstazidependencies", "");;
+        ekstaziDependenciesFile = Configuration.config().getProperty("dt.incdetector.ekstazidependencies", "");
         startsSelectedTestsFile = Configuration.config().getProperty("dt.incdetector.startsselectedtests", "");
-        startsDependenciesFile = Configuration.config().getProperty("dt.incdetector.startsdependencies", "");;
+        startsDependenciesFile = Configuration.config().getProperty("dt.incdetector.startsdependencies", "");
 
         getSureFireClassPath(project);
         loader = createClassLoader(sureFireClassPath);
 
         return null;
-    }
-
-    private void dynamicallyUpdateExcludes(List<String> excludePaths) throws MojoExecutionException {
-        if (AgentLoader.loadDynamicAgent()) {
-            System.setProperty(STARTS_EXCLUDE_PROPERTY, Arrays.toString(excludePaths.toArray(new String[0])));
-        } else {
-            throw new MojoExecutionException("I COULD NOT ATTACH THE AGENT");
-        }
     }
 
     public String getArtifactsDir() throws FileNotFoundException {
@@ -554,10 +405,11 @@ public class IncDetectorMojo extends DetectorMojo {
         Logger.getGlobal().log(Level.FINEST, "SF-CLASSPATH: " + sureFireClassPath.getClassPath());
         long end = System.currentTimeMillis();
         Logger.getGlobal().log(Level.FINE, "[PROFILE] IncDetectorPlugin(getSureFireClassPath): "
-                + Writer.millsToSeconds(end - start));
+                + millsToSeconds(end - start));
         return sureFireClassPath;
     }
 
+    @Override
     protected List<String> getTests(
             final MavenProject project,
             TestFramework testFramework) throws IOException {
@@ -591,6 +443,32 @@ public class IncDetectorMojo extends DetectorMojo {
         return classes;
     }
 
+    /**
+     * Compute the checksum for the given map and return the jar
+     * and the checksum as a string.
+     *
+     * @param jar  The jar whose checksum we need to compute.
+     */
+    public static Pair<String, String> getJarToChecksumMapping(String jar) {
+        Pair<String, String> pair = new Pair<>(jar, "-1");
+        byte[] bytes;
+        int bufSize = 65536 * 2;
+        try {
+            MessageDigest md = MessageDigest.getInstance("MD5");
+            InputStream is = Files.newInputStream(Paths.get(jar));
+            bytes = new byte[bufSize];
+            int size = is.read(bytes, 0, bufSize);
+            while (size >= 0) {
+                md.update(bytes, 0, size);
+                size = is.read(bytes, 0, bufSize);
+            }
+            pair.setValue(Hex.encodeHexString(md.digest()));
+        } catch (IOException | NoSuchAlgorithmException e) {
+            e.printStackTrace();
+        }
+        return pair;
+    }
+
     private boolean hasSameJarChecksum(List<String> cleanSfClassPath) throws FileNotFoundException {
         if (cleanSfClassPath.isEmpty()) {
             return true;
@@ -609,7 +487,7 @@ public class IncDetectorMojo extends DetectorMojo {
             }
             jarCheckSums = new ArrayList<>();
             for (String path : cleanSfClassPath) {
-                Pair<String, String> pair = Writer.getJarToChecksumMapping(path);
+                Pair<String, String> pair = getJarToChecksumMapping(path);
                 jarCheckSums.add(pair);
                 String oldCS = checksumMap.get(pair.getKey());
                 noException &= pair.getValue().equals(oldCS);
@@ -707,5 +585,67 @@ public class IncDetectorMojo extends DetectorMojo {
             }
         }
         return false;
+    }
+
+    public static BufferedWriter getWriter(String filePath) {
+        Path path = Paths.get(filePath);
+        BufferedWriter writer = null;
+        try {
+            if (path.getParent() != null && !Files.exists(path.getParent())) {
+                Files.createDirectories(path.getParent());
+            }
+            writer = Files.newBufferedWriter(path, StandardCharsets.UTF_8);
+        } catch (IOException e1) {
+            e1.printStackTrace();
+        }
+        return writer;
+    }
+
+    public static void writeJarChecksums(List<String> sfPathString, String artifactsDir, List<Pair> jarCheckSums) {
+        String outFilename = Paths.get(artifactsDir, JAR_CHECKSUMS).toString();
+        try (BufferedWriter writer = getWriter(outFilename)) {
+            if (jarCheckSums != null) {
+                // we already computed the checksums while checking with old version in RunMojo#hasSameJarChecksum()
+                for (Pair<String, String> pair : jarCheckSums) {
+                    writer.write(pair.toString());
+                    writer.write(System.lineSeparator());
+                }
+            } else {
+                for (String path : sfPathString) {
+                    if (path.isEmpty()) {
+                        continue;
+                    }
+                    writer.write(getJarToChecksumMapping(path).toString());
+                    writer.write(System.lineSeparator());
+                }
+            }
+        } catch (IOException ioe) {
+            ioe.printStackTrace();
+        }
+    }
+
+    public static void writeClassPath(String sfPathString, String artifactsDir) {
+        String outFilename = Paths.get(artifactsDir, SF_CLASSPATH).toString();
+        try (BufferedWriter writer = getWriter(outFilename)) {
+            writer.write(sfPathString + System.lineSeparator());
+        } catch (IOException ioe) {
+            ioe.printStackTrace();
+        }
+    }
+
+    public static String pathToString(List<String> classPath) {
+        StringBuilder sb = new StringBuilder();
+        Iterator<String> iterator = classPath.iterator();
+        while (iterator.hasNext()) {
+            sb.append(iterator.next());
+            if (iterator.hasNext()) {
+                sb.append(File.pathSeparator);
+            }
+        }
+        return sb.toString();
+    }
+
+    public static String millsToSeconds(long value) {
+        return String.format("%.03f", (double) value / 1000.0);
     }
 }

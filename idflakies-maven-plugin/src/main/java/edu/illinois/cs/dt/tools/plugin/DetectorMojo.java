@@ -50,7 +50,7 @@ public class DetectorMojo extends AbstractIDFlakiesMojo {
 
     protected Path outputPath;
     protected String coordinates;
-    private InstrumentingSmartRunner runner;
+    protected InstrumentingSmartRunner runner;
     private static Map<Integer, List<String>> locateTestList = new HashMap<>();
     // useful for modules with JUnit 4 tests but depend on something in JUnit 5
     private final boolean forceJUnit4 = Configuration.config().getProperty("dt.detector.forceJUnit4", false);
@@ -390,9 +390,5 @@ public class DetectorMojo extends AbstractIDFlakiesMojo {
         } catch (IOException e) {
             e.printStackTrace();
         }
-    }
-
-    public TestFramework getTestFramework() {
-        return this.runner.framework();
     }
 }

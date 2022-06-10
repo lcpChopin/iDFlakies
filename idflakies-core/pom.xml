@@ -89,11 +89,6 @@
             <groupId>org.xerial</groupId>
             <artifactId>sqlite-jdbc</artifactId>
         </dependency>
-        <dependency>
-            <groupId>org.soot-oss</groupId>
-            <artifactId>soot</artifactId>
-            <version>4.2.1</version>
-        </dependency>
     </dependencies>
 
     <profiles>
