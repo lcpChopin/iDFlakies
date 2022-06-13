@@ -373,7 +373,7 @@ public class DetectorMojo extends AbstractIDFlakiesMojo {
     }
 
     public static void timing(long startTime) {
-        if(!Files.exists(PathManager.timePath())) {
+        if (!Files.exists(PathManager.timePath())) {
             try {
                 Files.createFile(PathManager.timePath());
             } catch (IOException e) {
@@ -381,7 +381,7 @@ public class DetectorMojo extends AbstractIDFlakiesMojo {
             }
         }
         long endTime = System.currentTimeMillis();
-        double duration = (endTime - startTime)/1000.0;
+        double duration = (endTime - startTime) / 1000.0;
 
         String time = duration + ",";
         try {

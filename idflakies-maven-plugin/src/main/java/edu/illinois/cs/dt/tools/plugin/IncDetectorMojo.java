@@ -90,7 +90,7 @@ public class IncDetectorMojo extends DetectorMojo {
         this.coordinates = mavenProject.getGroupId() + ":" + mavenProject.getArtifactId() + ":" + mavenProject.getVersion();
 
         logger.runAndLogError(() -> defineSettings(logger, mavenProject));
-        if(this.runner == null) {
+        if (this.runner == null) {
             return;
         }
         long startTime = System.currentTimeMillis();
@@ -111,6 +111,7 @@ public class IncDetectorMojo extends DetectorMojo {
     }
 
     // from SelectMojo
+    // TODO: make Starts and Ekstazi's deps similar
     private Set<String> computeAffectedTests(final MavenProject project) throws IOException, MojoExecutionException, ClassNotFoundException {
         if (isEkstazi) {
             return computeEkstaziAffectedTests(project);
@@ -179,7 +180,7 @@ public class IncDetectorMojo extends DetectorMojo {
                 try {
                     Class clazz = loader.loadClass(dependency);
                     for (Field field : clazz.getDeclaredFields()) {
-                        if (inImmutableList(field) && Modifier.isFinal(field.getModifiers())) {
+                        if (isImmutable(field) && Modifier.isFinal(field.getModifiers())) {
                             continue;
                         }
                         if (Modifier.isStatic(field.getModifiers())) {
@@ -285,7 +286,7 @@ public class IncDetectorMojo extends DetectorMojo {
                 try {
                     Class clazz = loader.loadClass(dependency);
                     for (Field field : clazz.getDeclaredFields()) {
-                        if (inImmutableList(field) && Modifier.isFinal(field.getModifiers())) {
+                        if (isImmutable(field) && Modifier.isFinal(field.getModifiers())) {
                             continue;
                         }
                         if (Modifier.isStatic(field.getModifiers())) {
@@ -310,7 +311,7 @@ public class IncDetectorMojo extends DetectorMojo {
         return affectedTests;
     }
 
-    public ClassLoader createClassLoader(Classpath sfClassPath) {
+    private ClassLoader createClassLoader(Classpath sfClassPath) {
         long start = System.currentTimeMillis();
         ClassLoader loader = null;
         try {
@@ -343,7 +344,7 @@ public class IncDetectorMojo extends DetectorMojo {
         return null;
     }
 
-    public String getArtifactsDir() throws FileNotFoundException {
+    private String getArtifactsDir() throws FileNotFoundException {
         if (artifactsDir == null) {
             artifactsDir = PathManager.cachePath().toString();
             File file = new File(artifactsDir);
@@ -374,7 +375,7 @@ public class IncDetectorMojo extends DetectorMojo {
         return cpPaths;
     }
 
-    public Map<String, Set<String>> getReverseClosure(Map<String, Set<String>> transitiveClosure) {
+    private Map<String, Set<String>> getReverseClosure(Map<String, Set<String>> transitiveClosure) {
         Map<String, Set<String>> reverseTransitiveClosure = new HashMap<>();
         for (Map.Entry<String, Set<String>> entry : transitiveClosure.entrySet()) {
             for (String dep : entry.getValue()) {
@@ -393,7 +394,7 @@ public class IncDetectorMojo extends DetectorMojo {
         return reverseTransitiveClosure;
     }
 
-    public Classpath getSureFireClassPath(final MavenProject project) {
+    private Classpath getSureFireClassPath(final MavenProject project) {
         long start = System.currentTimeMillis();
         if (sureFireClassPath == null) {
             try {
@@ -426,7 +427,7 @@ public class IncDetectorMojo extends DetectorMojo {
         return affectedTests;
     }
 
-    public static List<String> getTestClasses (
+    private List<String> getTestClasses(
             final MavenProject project,
             TestFramework testFramework) throws IOException {
         List<String> tests = getOriginalOrder(project, testFramework, true);
@@ -449,7 +450,7 @@ public class IncDetectorMojo extends DetectorMojo {
      *
      * @param jar  The jar whose checksum we need to compute.
      */
-    public static Pair<String, String> getJarToChecksumMapping(String jar) {
+    private Pair<String, String> getJarToChecksumMapping(String jar) {
         Pair<String, String> pair = new Pair<>(jar, "-1");
         byte[] bytes;
         int bufSize = 65536 * 2;
@@ -533,7 +534,7 @@ public class IncDetectorMojo extends DetectorMojo {
         return false;
     }
 
-    private static Set<String> getImmutableList() {
+    private Set<String> getImmutableList() {
         if (immutableList == null) {
             immutableList = new HashSet<>();
 
@@ -569,7 +570,7 @@ public class IncDetectorMojo extends DetectorMojo {
         return immutableList;
     }
 
-    private static boolean inImmutableList(Field field) {
+    private boolean isImmutable(Field field) {
         boolean isFinal = false;
         if (Modifier.isFinal(field.getModifiers())) {
             isFinal = true;
@@ -587,7 +588,7 @@ public class IncDetectorMojo extends DetectorMojo {
         return false;
     }
 
-    public static BufferedWriter getWriter(String filePath) {
+    private BufferedWriter getWriter(String filePath) {
         Path path = Paths.get(filePath);
         BufferedWriter writer = null;
         try {
@@ -601,7 +602,7 @@ public class IncDetectorMojo extends DetectorMojo {
         return writer;
     }
 
-    public static void writeJarChecksums(List<String> sfPathString, String artifactsDir, List<Pair> jarCheckSums) {
+    private void writeJarChecksums(List<String> sfPathString, String artifactsDir, List<Pair> jarCheckSums) {
         String outFilename = Paths.get(artifactsDir, JAR_CHECKSUMS).toString();
         try (BufferedWriter writer = getWriter(outFilename)) {
             if (jarCheckSums != null) {
@@ -624,7 +625,7 @@ public class IncDetectorMojo extends DetectorMojo {
         }
     }
 
-    public static void writeClassPath(String sfPathString, String artifactsDir) {
+    private void writeClassPath(String sfPathString, String artifactsDir) {
         String outFilename = Paths.get(artifactsDir, SF_CLASSPATH).toString();
         try (BufferedWriter writer = getWriter(outFilename)) {
             writer.write(sfPathString + System.lineSeparator());
@@ -633,7 +634,7 @@ public class IncDetectorMojo extends DetectorMojo {
         }
     }
 
-    public static String pathToString(List<String> classPath) {
+    private String pathToString(List<String> classPath) {
         StringBuilder sb = new StringBuilder();
         Iterator<String> iterator = classPath.iterator();
         while (iterator.hasNext()) {
@@ -645,7 +646,8 @@ public class IncDetectorMojo extends DetectorMojo {
         return sb.toString();
     }
 
-    public static String millsToSeconds(long value) {
+    // TODO: make Starts and Ekstazi's deps similar
+    private String millsToSeconds(long value) {
         return String.format("%.03f", (double) value / 1000.0);
     }
 }

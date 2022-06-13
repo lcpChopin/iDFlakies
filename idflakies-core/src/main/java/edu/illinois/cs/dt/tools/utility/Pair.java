@@ -31,10 +31,7 @@ public class Pair<K, V> implements Serializable {
 
         Pair<?, ?> pair = (Pair<?, ?>) obj;
 
-        if (!key.equals(pair.key)) {
-            return false;
-        }
-        return value.equals(pair.value);
+        return key.equals(pair.key) && value.equals(pair.value);
     }
 
     @Override
