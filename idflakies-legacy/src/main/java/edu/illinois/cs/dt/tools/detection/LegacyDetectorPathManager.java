@@ -103,6 +103,39 @@ public class LegacyDetectorPathManager extends PathManager {
         }
     }
 
+    @Override
+    public Path startsPathInstance() {
+        String outputPath = Configuration.config().properties().getProperty("dt.incdetector.startspath", "");
+        Logger.getGlobal().log(Level.FINE, "Accessing startspath: " + outputPath);
+        if (outputPath == "") {
+            return modulePath().resolve(".starts");
+        } else {
+            Path outputPathObj = Paths.get(outputPath);
+            try {
+                Files.createDirectories(outputPathObj);
+            } catch (IOException e) {
+                Logger.getGlobal().log(Level.FINE, e.getMessage());
+            }
+            return outputPathObj.resolve(modulePath().getFileName());
+        }
+    }
+
+    @Override
+    public Path ekstaziPathInstance() {
+        String outputPath = Configuration.config().properties().getProperty("dt.incdetector.ekstazipath", "");
+        Logger.getGlobal().log(Level.FINE, "Accessing ekstazipath: " + outputPath);
+        if (outputPath == "") {
+            return modulePath().resolve(".ekstazi");
+        } else {
+            Path outputPathObj = Paths.get(outputPath);
+            try {
+                Files.createDirectories(outputPathObj);
+            } catch (IOException e) {
+                Logger.getGlobal().log(Level.FINE, e.getMessage());
+            }
+            return outputPathObj.resolve(modulePath().getFileName());
+        }
+    }
 
     @Override
     public Path modulePathInstance() {

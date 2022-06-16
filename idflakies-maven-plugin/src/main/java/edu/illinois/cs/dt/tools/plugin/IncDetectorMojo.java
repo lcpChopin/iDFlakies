@@ -1,12 +1,15 @@
 package edu.illinois.cs.dt.tools.plugin;
 
+import com.google.common.base.Preconditions;
 import edu.illinois.cs.dt.tools.utility.ErrorLogger;
 import edu.illinois.cs.dt.tools.utility.Level;
 import edu.illinois.cs.dt.tools.utility.Logger;
 import edu.illinois.cs.dt.tools.utility.PathManager;
 import edu.illinois.cs.testrunner.configuration.Configuration;
 import edu.illinois.cs.testrunner.data.framework.TestFramework;
-import edu.illinois.cs.dt.tools.utility.Pair;
+import edu.illinois.starts.helpers.Writer;
+import edu.illinois.starts.util.Pair;
+
 import org.apache.commons.codec.binary.Hex;
 import org.apache.maven.artifact.DependencyResolutionRequiredException;
 import org.apache.maven.plugin.MojoExecutionException;
@@ -21,7 +24,6 @@ import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileNotFoundException;
-import java.io.FileReader;
 import java.io.InputStream;
 import java.io.IOException;
 import java.lang.reflect.Field;
@@ -35,7 +37,6 @@ import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -44,7 +45,7 @@ import java.util.Set;
 public class IncDetectorMojo extends DetectorMojo {
 
     protected static String CLASSES = "classes";
-    protected static String COMMA = ",";
+    protected static String EQUAL = "=";
     protected static String JAR_CHECKSUMS = "jar-checksums";
     protected static String SF_CLASSPATH = "sf-classpath";
     protected static String TEST_CLASSES = "test-classes";
@@ -55,11 +56,21 @@ public class IncDetectorMojo extends DetectorMojo {
      */
     protected String artifactsDir;
 
+    protected String startsDir;
+
+    protected String ekstaziDir;
+
     protected ClassLoader loader;
 
     protected List<Pair> jarCheckSums = null;
 
-    protected Set<String> nonAffectedTests;
+    protected Set<String> selectedTests;
+
+    // the dependency map from test classes to their dependencies (classes)
+    protected Map<String, Set<String>> transitiveClosure;
+
+    // the dependency map from classes to their dependencies (test classes)
+    protected Map<String, Set<String>> reverseTransitiveClosure;
 
     private Classpath sureFireClassPath;
 
@@ -67,13 +78,15 @@ public class IncDetectorMojo extends DetectorMojo {
 
     protected boolean detectOrNot;
 
-    protected String ekstaziSelectedTestsFile;
+    protected boolean selectAll;
+
+    protected Path ekstaziSelectedTestsPath;
 
     protected String ekstaziDependenciesFile;
 
-    protected String startsSelectedTestsFile;
+    protected Path startsSelectedTestsPath;
 
-    protected String startsDependenciesFile;
+    protected Path startsDependenciesPath;
 
     protected boolean isEkstazi;
 
@@ -110,162 +123,28 @@ public class IncDetectorMojo extends DetectorMojo {
         timing(startTime);
     }
 
-    // from SelectMojo
     // TODO: make Starts and Ekstazi's deps similar
     private Set<String> computeAffectedTests(final MavenProject project) throws IOException, MojoExecutionException, ClassNotFoundException {
-        if (isEkstazi) {
-            return computeEkstaziAffectedTests(project);
-        }
-
         Set<String> affectedTests = new HashSet<>();
+        Set<String> allTests = new HashSet<>(getTestClasses(project, this.runner.framework()));
 
-        if (!detectOrNot) {
-            return affectedTests;
+        if (isEkstazi) {
+            selectedTests = getSelectedTests(ekstaziSelectedTestsPath);
+            checkSelectAll();
+        } else {
+            selectedTests = getSelectedTests(startsSelectedTestsPath);
         }
 
-        try {
-            BufferedReader in = new BufferedReader(new FileReader(startsSelectedTestsFile));
-            String str;
-            while ((str = in.readLine()) != null) {
-                affectedTests.add(str);
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-
+        affectedTests.addAll(selectedTests);
         if (!selectMore) {
             return affectedTests;
-        }
-
-        Map<String, Set<String>> reverseTransitiveClosure = new HashMap<>();
-
-        try {
-            BufferedReader in = new BufferedReader(new FileReader(startsDependenciesFile));
-            String str;
-            while ((str = in.readLine()) != null) {
-                if (!str.contains(",")) {
-                    continue;
-                }
-                String transitiveClosureKey = str.substring(0, str.indexOf(","));
-                String transitiveClosureValues = str.substring(str.indexOf(","));
-                String[] transitiveClosureValueArray = transitiveClosureValues.split(",");
-                Set<String> transitiveClosureValue = new HashSet<>();
-                for (String transitiveClosureValueArrayItem: transitiveClosureValueArray) {
-                    transitiveClosureValue.add(transitiveClosureValueArrayItem);
-                }
-                reverseTransitiveClosure.put(transitiveClosureKey, transitiveClosureValue);
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-
-        // the dependency map from classes to their dependencies
-        Map<String, Set<String>> transitiveClosure = getReverseClosure(reverseTransitiveClosure);
-
-        Set<String> additionalTests = new HashSet<>();
-
-        // iter through the affected tests and find what depends on
-        Set<String> processedClasses = new HashSet<>();
-
-        getImmutableList();
-        for (String affectedTest : affectedTests) {
-            Set<String> dependencies = transitiveClosure.get(affectedTest);
-            if (dependencies == null) {
-                continue;
-            }
-            for (String dependency : dependencies) {
-                if (processedClasses.contains(dependency)) {
-                    continue;
-                }
-                try {
-                    Class clazz = loader.loadClass(dependency);
-                    for (Field field : clazz.getDeclaredFields()) {
-                        if (isImmutable(field) && Modifier.isFinal(field.getModifiers())) {
-                            continue;
-                        }
-                        if (Modifier.isStatic(field.getModifiers())) {
-                            String upperLevelAffectedClass = clazz.getName();
-                            Set<String> upperLevelAffectedTestClasses = reverseTransitiveClosure.get(upperLevelAffectedClass);
-                            if (upperLevelAffectedTestClasses != null) {
-                                for (String upperLevelAffectedTestClass: upperLevelAffectedTestClasses) {
-                                    additionalTests.add(upperLevelAffectedTestClass);
-                                }
-                            }
-                            break;
-                        }
-                    }
-                    processedClasses.add(dependency);
-                } catch (ClassNotFoundException | NoClassDefFoundError e)  {
-                    e.printStackTrace();
-                }
-
-            }
-        }
-
-        affectedTests.addAll(additionalTests);
-        return affectedTests;
-    }
-
-    private Set<String> computeEkstaziAffectedTests(final MavenProject project) throws IOException, MojoExecutionException {
-        String cpString = pathToString(sureFireClassPath.getClassPath());
-        List<String> sfPathElements = getCleanClassPath(cpString);
-
-        Set<String> allTests = new HashSet<>(getTestClasses(project, this.runner.framework()));
-        Set<String> affectedTests = new HashSet<>();
-
-        boolean selectAll = false;
-        if (!isSameClassPath(sfPathElements) || !hasSameJarChecksum(sfPathElements)) {
-            // Force retestAll because classpath changed since last run
-            // don't compute changed and non-affected classes
-            // Make nonAffected empty so dependencies can be updated
-            nonAffectedTests = new HashSet<>();
-            writeClassPath(cpString, artifactsDir);
-            writeJarChecksums(sfPathElements, artifactsDir, jarCheckSums);
-            selectAll = true;
         }
 
         if (selectAll) {
             return allTests;
         }
 
-        try {
-            BufferedReader in = new BufferedReader(new FileReader(ekstaziSelectedTestsFile));
-            String str;
-            while ((str = in.readLine()) != null) {
-                affectedTests.add(str);
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-
-        if (!selectMore) {
-            return affectedTests;
-        }
-
-        Map<String, Set<String>> transitiveClosure = new HashMap<>();
-
-        try {
-            BufferedReader in = new BufferedReader(new FileReader(ekstaziDependenciesFile));
-            String str;
-            while ((str = in.readLine()) != null) {
-                if (!str.contains(",")) {
-                    continue;
-                }
-                String transitiveClosureKey = str.substring(0, str.indexOf(","));
-                String transitiveClosureValues = str.substring(str.indexOf(","));
-                String[] transitiveClosureValueArray = transitiveClosureValues.split(",");
-                Set<String> transitiveClosureValue = new HashSet<>();
-                for (String transitiveClosureValueArrayItem: transitiveClosureValueArray) {
-                    transitiveClosureValue.add(transitiveClosureValueArrayItem);
-                }
-                transitiveClosure.put(transitiveClosureKey, transitiveClosureValue);
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-
-        // the dependency map from classes to their dependencies
-        Map<String, Set<String>> reverseTransitiveClosure = getReverseClosure(transitiveClosure);
+        getTransitiveClosure();
 
         Set<String> additionalTests = new HashSet<>();
 
@@ -311,6 +190,104 @@ public class IncDetectorMojo extends DetectorMojo {
         return affectedTests;
     }
 
+    private Set<String> getSelectedTests(final Path path) {
+        selectedTests = new HashSet<>();
+        try {
+            BufferedReader in = Files.newBufferedReader(path, StandardCharsets.UTF_8);
+            String str;
+            while ((str = in.readLine()) != null) {
+                selectedTests.add(str);
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return selectedTests;
+    }
+
+    private Map<String, Set<String>> getTransitiveClosure(){
+
+        if (isEkstazi) {
+            try {
+                File ekstaziDirFile = new File(ekstaziDir);
+                File[] files = ekstaziDirFile.listFiles();
+                for (File file : files) {
+                    String fileName = file.toString().substring(file.toString().lastIndexOf(File.separator) + 1);
+                    if (fileName.endsWith(".clz")) {
+                        String transitiveClosureKey = fileName.substring(0, fileName.indexOf(".clz"));
+                        BufferedReader in = Files.newBufferedReader(Paths.get(file.toString()), StandardCharsets.UTF_8);
+                        String str;
+                        Set<String> transitiveClosureValue = new HashSet<>();
+                        while ((str = in.readLine()) != null) {
+                            if (!str.contains(".class")) {
+                                continue;
+                            }
+                            String prefix = str.substring(0, str.indexOf(".class"));
+                            String transitiveClosureValueArrayItem = "";
+                            if (prefix.contains("/target/classes/")) {
+                                transitiveClosureValueArrayItem = prefix.substring(prefix.indexOf("/target/classes/") + 16).replaceAll("/", ".");
+                            } else if (prefix.contains("/target/test-classes/")) {
+                                transitiveClosureValueArrayItem = prefix.substring(prefix.indexOf("/target/test-classes/") + 21).replaceAll("/", ".");;
+                            } else if (prefix.contains("/wiki/fixtures/")) {
+                                transitiveClosureValueArrayItem = prefix.substring(prefix.indexOf("/wiki/fixtures/") + 15).replaceAll("/", ".");;
+                            }
+                            transitiveClosureValue.add(transitiveClosureValueArrayItem);
+                        }
+                        transitiveClosure.put(transitiveClosureKey, transitiveClosureValue);
+                    }
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            // the dependency map from classes to their dependencies (test classes)
+            reverseTransitiveClosure = getReverseClosure(transitiveClosure);
+        } else {
+            try {
+                BufferedReader in = Files.newBufferedReader(startsDependenciesPath, StandardCharsets.UTF_8);
+                String str;
+                while ((str = in.readLine()) != null) {
+                    if (!str.contains(",")) {
+                        continue;
+                    }
+                    String prefix = str.substring(0, str.indexOf(".class"));
+                    String transitiveClosureKey = "";
+                    String transitiveClosureValues = str.substring(str.lastIndexOf(" ") + 1);
+                    if (prefix.contains("/target/classes/")) {
+                        transitiveClosureKey = prefix.substring(prefix.indexOf("/target/classes/") + 16).replaceAll("/", ".");
+                    } else if (prefix.contains("/target/test-classes/")) {
+                        transitiveClosureKey = prefix.substring(prefix.indexOf("/target/test-classes/") + 21).replaceAll("/", ".");
+                    } else if (prefix.contains("/wiki/fixtures/")) {
+                        transitiveClosureKey = prefix.substring(prefix.indexOf("/wiki/fixtures/") + 15).replaceAll("/", ".");
+                    }
+                    String[] transitiveClosureValueArray = transitiveClosureValues.split(",");
+                    Set<String> transitiveClosureValue = new HashSet<>();
+                    for (String transitiveClosureValueArrayItem : transitiveClosureValueArray) {
+                        transitiveClosureValue.add(transitiveClosureValueArrayItem);
+                    }
+                    reverseTransitiveClosure.put(transitiveClosureKey, transitiveClosureValue);
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            // the dependency map from test classes to their dependencies (classes)
+            transitiveClosure = getReverseClosure(reverseTransitiveClosure);
+        }
+        return transitiveClosure;
+    }
+
+    private void checkSelectAll() throws IOException, MojoExecutionException {
+        String cpString = Writer.pathToString(sureFireClassPath.getClassPath());
+        List<String> sfPathElements = getCleanClassPath(cpString);
+
+        selectAll = false;
+        if (!isSameClassPath(sfPathElements) || !hasSameJarChecksum(sfPathElements)) {
+            // Force retestAll because classpath changed since last run
+            // don't compute changed and non-affected classes
+            // Make nonAffected empty so dependencies can be updated
+            Writer.writeClassPath(cpString, artifactsDir);
+            writeJarChecksums(sfPathElements, artifactsDir, jarCheckSums);
+            selectAll = true;
+        }
+    }
     private ClassLoader createClassLoader(Classpath sfClassPath) {
         long start = System.currentTimeMillis();
         ClassLoader loader = null;
@@ -321,8 +298,15 @@ public class IncDetectorMojo extends DetectorMojo {
         }
         long end = System.currentTimeMillis();
         Logger.getGlobal().log(Level.FINE, "[PROFILE] IncDetectorPlugin(createClassLoader): "
-                + millsToSeconds(end - start));
+                + Writer.millsToSeconds(end - start));
         return loader;
+    }
+
+    public Path relativePath(final Path initial, final Path relative) {
+        Preconditions.checkState(!relative.isAbsolute(),
+                "PathManager.path(): Cache paths must be relative, not absolute (%s)", relative);
+
+        return initial.resolve(relative);
     }
 
     @Override
@@ -330,13 +314,19 @@ public class IncDetectorMojo extends DetectorMojo {
         super.defineSettings(logger, project);
 
         artifactsDir = getArtifactsDir();
+        startsDir = getStartsDir();
+        ekstaziDir = getEkstaziDir();
         selectMore = Configuration.config().getProperty("dt.incdetector.selectmore", false);
+        selectAll = false;
         detectOrNot = Configuration.config().getProperty("dt.incdetector.detectornot", true);
         isEkstazi = Configuration.config().getProperty("dt.incdetector.ekstazi", false);
-        ekstaziSelectedTestsFile = Configuration.config().getProperty("dt.incdetector.ekstaziselectedtests", "");
-        ekstaziDependenciesFile = Configuration.config().getProperty("dt.incdetector.ekstazidependencies", "");
-        startsSelectedTestsFile = Configuration.config().getProperty("dt.incdetector.startsselectedtests", "");
-        startsDependenciesFile = Configuration.config().getProperty("dt.incdetector.startsdependencies", "");
+        ekstaziSelectedTestsPath = relativePath(PathManager.ekstaziPath(), Paths.get("selected-tests"));
+        // ekstaziDependenciesFile = Configuration.config().getProperty("dt.incdetector.ekstazidependencies", "");
+        startsSelectedTestsPath = relativePath(PathManager.startsPath(), Paths.get("selected-tests"));
+        startsDependenciesPath = relativePath(PathManager.startsPath(), Paths.get("deps.zlc"));
+
+        transitiveClosure = new HashMap<>();
+        reverseTransitiveClosure = new HashMap<>();
 
         getSureFireClassPath(project);
         loader = createClassLoader(sureFireClassPath);
@@ -353,6 +343,28 @@ public class IncDetectorMojo extends DetectorMojo {
             }
         }
         return artifactsDir;
+    }
+
+    private String getStartsDir() throws FileNotFoundException {
+        if (startsDir == null) {
+            startsDir = PathManager.startsPath().toString();
+            File file = new File(startsDir);
+            if (!file.mkdirs() && !file.exists()) {
+                throw new FileNotFoundException("I could not create artifacts dir: " + startsDir);
+            }
+        }
+        return startsDir;
+    }
+
+    private String getEkstaziDir() throws FileNotFoundException {
+        if (ekstaziDir == null) {
+            ekstaziDir = PathManager.ekstaziPath().toString();
+            File file = new File(ekstaziDir);
+            if (!file.mkdirs() && !file.exists()) {
+                throw new FileNotFoundException("I could not create artifacts dir: " + ekstaziDir);
+            }
+        }
+        return ekstaziDir;
     }
 
     private List<String> getCleanClassPath(String cp) {
@@ -406,7 +418,7 @@ public class IncDetectorMojo extends DetectorMojo {
         Logger.getGlobal().log(Level.FINEST, "SF-CLASSPATH: " + sureFireClassPath.getClassPath());
         long end = System.currentTimeMillis();
         Logger.getGlobal().log(Level.FINE, "[PROFILE] IncDetectorPlugin(getSureFireClassPath): "
-                + millsToSeconds(end - start));
+                + Writer.millsToSeconds(end - start));
         return sureFireClassPath;
     }
 
@@ -463,7 +475,7 @@ public class IncDetectorMojo extends DetectorMojo {
                 md.update(bytes, 0, size);
                 size = is.read(bytes, 0, bufSize);
             }
-            pair.setValue(Hex.encodeHexString(md.digest()));
+            pair = new Pair<>(jar, Hex.encodeHexString(md.digest()));
         } catch (IOException | NoSuchAlgorithmException e) {
             e.printStackTrace();
         }
@@ -483,7 +495,7 @@ public class IncDetectorMojo extends DetectorMojo {
             List<String> lines = Files.readAllLines(Paths.get(oldChecksumPathFileName));
             Map<String, String> checksumMap = new HashMap<>();
             for (String line : lines) {
-                String[] elems = line.split(COMMA);
+                String[] elems = line.split(EQUAL);
                 checksumMap.put(elems[0], elems[1]);
             }
             jarCheckSums = new ArrayList<>();
@@ -588,23 +600,9 @@ public class IncDetectorMojo extends DetectorMojo {
         return false;
     }
 
-    private BufferedWriter getWriter(String filePath) {
-        Path path = Paths.get(filePath);
-        BufferedWriter writer = null;
-        try {
-            if (path.getParent() != null && !Files.exists(path.getParent())) {
-                Files.createDirectories(path.getParent());
-            }
-            writer = Files.newBufferedWriter(path, StandardCharsets.UTF_8);
-        } catch (IOException e1) {
-            e1.printStackTrace();
-        }
-        return writer;
-    }
-
     private void writeJarChecksums(List<String> sfPathString, String artifactsDir, List<Pair> jarCheckSums) {
         String outFilename = Paths.get(artifactsDir, JAR_CHECKSUMS).toString();
-        try (BufferedWriter writer = getWriter(outFilename)) {
+        try (BufferedWriter writer = Writer.getWriter(outFilename)) {
             if (jarCheckSums != null) {
                 // we already computed the checksums while checking with old version in RunMojo#hasSameJarChecksum()
                 for (Pair<String, String> pair : jarCheckSums) {
@@ -623,31 +621,5 @@ public class IncDetectorMojo extends DetectorMojo {
         } catch (IOException ioe) {
             ioe.printStackTrace();
         }
-    }
-
-    private void writeClassPath(String sfPathString, String artifactsDir) {
-        String outFilename = Paths.get(artifactsDir, SF_CLASSPATH).toString();
-        try (BufferedWriter writer = getWriter(outFilename)) {
-            writer.write(sfPathString + System.lineSeparator());
-        } catch (IOException ioe) {
-            ioe.printStackTrace();
-        }
-    }
-
-    private String pathToString(List<String> classPath) {
-        StringBuilder sb = new StringBuilder();
-        Iterator<String> iterator = classPath.iterator();
-        while (iterator.hasNext()) {
-            sb.append(iterator.next());
-            if (iterator.hasNext()) {
-                sb.append(File.pathSeparator);
-            }
-        }
-        return sb.toString();
-    }
-
-    // TODO: make Starts and Ekstazi's deps similar
-    private String millsToSeconds(long value) {
-        return String.format("%.03f", (double) value / 1000.0);
     }
 }

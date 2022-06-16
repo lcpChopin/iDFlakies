@@ -83,6 +83,14 @@ public abstract class PathManager {
         return getInstance().cachePathInstance();
     }
 
+    public static Path startsPath() {
+        return getInstance().startsPathInstance();
+    }
+
+    public static Path ekstaziPath() {
+        return getInstance().ekstaziPathInstance();
+    }
+
     public static Path path(final Path relative) {
         return getInstance().pathInstance(relative);
     }
@@ -116,6 +124,10 @@ public abstract class PathManager {
     protected abstract Path parentPath(final Path relative);
     
     protected abstract Path cachePathInstance();
+
+    protected abstract Path startsPathInstance();
+
+    protected abstract Path ekstaziPathInstance();
     
     protected abstract Path pathInstance(final Path relative);
     
