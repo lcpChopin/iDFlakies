@@ -7,6 +7,7 @@ import edu.illinois.cs.dt.tools.utility.Logger;
 import edu.illinois.cs.dt.tools.utility.PathManager;
 import edu.illinois.cs.testrunner.configuration.Configuration;
 import edu.illinois.cs.testrunner.data.framework.TestFramework;
+import edu.illinois.starts.asm.ClassReader;
 import edu.illinois.starts.helpers.Writer;
 import edu.illinois.starts.util.Pair;
 
@@ -28,6 +29,8 @@ import java.io.InputStream;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
+import java.net.URL;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -35,11 +38,14 @@ import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+
+import static edu.illinois.starts.helpers.ZLCHelper.STAR_FILE;
 
 @Mojo(name = "incdetect", defaultPhase = LifecyclePhase.TEST, requiresDependencyResolution = ResolutionScope.TEST)
 public class IncDetectorMojo extends DetectorMojo {
@@ -218,18 +224,13 @@ public class IncDetectorMojo extends DetectorMojo {
                         String str;
                         Set<String> transitiveClosureValue = new HashSet<>();
                         while ((str = in.readLine()) != null) {
-                            if (!str.contains(".class")) {
+                            if (!str.contains(".class") || !str.startsWith("file:")) {
                                 continue;
                             }
-                            String prefix = str.substring(0, str.indexOf(".class"));
-                            String transitiveClosureValueArrayItem = "";
-                            if (prefix.contains("/target/classes/")) {
-                                transitiveClosureValueArrayItem = prefix.substring(prefix.indexOf("/target/classes/") + 16).replaceAll("/", ".");
-                            } else if (prefix.contains("/target/test-classes/")) {
-                                transitiveClosureValueArrayItem = prefix.substring(prefix.indexOf("/target/test-classes/") + 21).replaceAll("/", ".");;
-                            } else if (prefix.contains("/wiki/fixtures/")) {
-                                transitiveClosureValueArrayItem = prefix.substring(prefix.indexOf("/wiki/fixtures/") + 15).replaceAll("/", ".");;
-                            }
+                            int sepIndex = str.lastIndexOf("_");
+                            String urlExternalForm = str.substring(0, sepIndex);
+                            URL url = new URL(urlExternalForm);
+                            String transitiveClosureValueArrayItem = getClassNameFromClassFile(url.getPath());
                             transitiveClosureValue.add(transitiveClosureValueArrayItem);
                         }
                         transitiveClosure.put(transitiveClosureKey, transitiveClosureValue);
@@ -242,28 +243,22 @@ public class IncDetectorMojo extends DetectorMojo {
             reverseTransitiveClosure = getReverseClosure(transitiveClosure);
         } else {
             try {
-                BufferedReader in = Files.newBufferedReader(startsDependenciesPath, StandardCharsets.UTF_8);
-                String str;
-                while ((str = in.readLine()) != null) {
-                    if (!str.contains(",")) {
-                        continue;
-                    }
-                    String prefix = str.substring(0, str.indexOf(".class"));
-                    String transitiveClosureKey = "";
-                    String transitiveClosureValues = str.substring(str.lastIndexOf(" ") + 1);
-                    if (prefix.contains("/target/classes/")) {
-                        transitiveClosureKey = prefix.substring(prefix.indexOf("/target/classes/") + 16).replaceAll("/", ".");
-                    } else if (prefix.contains("/target/test-classes/")) {
-                        transitiveClosureKey = prefix.substring(prefix.indexOf("/target/test-classes/") + 21).replaceAll("/", ".");
-                    } else if (prefix.contains("/wiki/fixtures/")) {
-                        transitiveClosureKey = prefix.substring(prefix.indexOf("/wiki/fixtures/") + 15).replaceAll("/", ".");
-                    }
-                    String[] transitiveClosureValueArray = transitiveClosureValues.split(",");
-                    Set<String> transitiveClosureValue = new HashSet<>();
-                    for (String transitiveClosureValueArrayItem : transitiveClosureValueArray) {
-                        transitiveClosureValue.add(transitiveClosureValueArrayItem);
-                    }
-                    reverseTransitiveClosure.put(transitiveClosureKey, transitiveClosureValue);
+                List<String> zlcLines = Files.readAllLines(startsDependenciesPath, Charset.defaultCharset());
+                String firstLine = zlcLines.get(0);
+                String space = " ";
+
+                // check whether the first line is for *
+                if (firstLine.startsWith(STAR_FILE) || firstLine.equals("PLAIN_TEXT")) {
+                    zlcLines.remove(0);
+                }
+
+                for (String line : zlcLines) {
+                    String[] parts = line.split(space);
+                    String stringURL = parts[0];
+                    Set<String> tests = parts.length == 3 ? fromCSV(parts[2]) : new HashSet<String>();
+                    URL url = new URL(stringURL);
+                    String reverseTransitiveClosureKey = getClassNameFromClassFile(url.getPath());
+                    reverseTransitiveClosure.put(reverseTransitiveClosureKey, tests);
                 }
             } catch (IOException e) {
                 e.printStackTrace();
@@ -621,5 +616,20 @@ public class IncDetectorMojo extends DetectorMojo {
         } catch (IOException ioe) {
             ioe.printStackTrace();
         }
+    }
+
+    private static Set<String> fromCSV(String tests) {
+        return new HashSet<>(Arrays.asList(tests.split(",")));
+    }
+
+    public static String getClassNameFromClassFile(String filePath) {
+        try {
+            byte[] classFileBuffer = Files.readAllBytes(Paths.get(filePath));
+            ClassReader classReader = new ClassReader(classFileBuffer);
+            return classReader.getClassName().replaceAll("/", ".");
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return "";
     }
 }
