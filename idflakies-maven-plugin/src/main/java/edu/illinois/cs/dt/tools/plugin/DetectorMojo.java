@@ -284,7 +284,7 @@ public class DetectorMojo extends AbstractIDFlakiesMojo {
 
         if (!tests.isEmpty()) {
             Files.createDirectories(outputPath);
-            Files.write(PathManager.originalOrderPath(), String.join(System.lineSeparator(), tests).getBytes());
+            Files.write(PathManager.originalOrderPath(), String.join(System.lineSeparator(), getOriginalOrder(mavenProject, this.runner.framework(), true)).getBytes());
             Files.write(PathManager.selectedTestPath(), String.join(System.lineSeparator(), tests).getBytes());
             final Detector detector = DetectorFactory.makeDetector(this.runner, mavenProject.getBasedir(), tests, rounds);
             Logger.getGlobal().log(Level.INFO, "Created dependent test detector (" + detector.getClass() + ").");

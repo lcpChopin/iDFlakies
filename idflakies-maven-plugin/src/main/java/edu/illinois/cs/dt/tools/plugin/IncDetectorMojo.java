@@ -136,8 +136,11 @@ public class IncDetectorMojo extends DetectorMojo {
 
         if (isEkstazi) {
             selectedTests = getSelectedTests(ekstaziSelectedTestsPath);
+            // check if the classpath or jar checksum are changed; if they are changed, ekstazi should select all tests
             checkSelectAll();
         } else {
+            // starts itself has already checked if the classpath / jar checksum are changed
+            // thus we do not need to check it here.
             selectedTests = getSelectedTests(startsSelectedTestsPath);
         }
 
@@ -154,10 +157,9 @@ public class IncDetectorMojo extends DetectorMojo {
 
         Set<String> additionalTests = new HashSet<>();
 
-        // iter through the affected tests and find what depends on
+        // iter through the affected tests and find what each one depends on
         Set<String> processedClasses = new HashSet<>();
 
-        // add class count for basic version ...
         getImmutableList();
         for (String affectedTest : affectedTests) {
             Set<String> dependencies = transitiveClosure.get(affectedTest);
@@ -178,7 +180,7 @@ public class IncDetectorMojo extends DetectorMojo {
                             String upperLevelAffectedClass = clazz.getName();
                             Set<String> upperLevelAffectedTestClasses = reverseTransitiveClosure.get(upperLevelAffectedClass);
                             if (upperLevelAffectedTestClasses != null) {
-                                for (String upperLevelAffectedTestClass: upperLevelAffectedTestClasses) {
+                                for (String upperLevelAffectedTestClass : upperLevelAffectedTestClasses) {
                                     additionalTests.add(upperLevelAffectedTestClass);
                                 }
                             }
@@ -210,8 +212,7 @@ public class IncDetectorMojo extends DetectorMojo {
         return selectedTests;
     }
 
-    private Map<String, Set<String>> getTransitiveClosure(){
-
+    private void getTransitiveClosure() {
         if (isEkstazi) {
             try {
                 File ekstaziDirFile = new File(ekstaziDir);
@@ -266,9 +267,9 @@ public class IncDetectorMojo extends DetectorMojo {
             // the dependency map from test classes to their dependencies (classes)
             transitiveClosure = getReverseClosure(reverseTransitiveClosure);
         }
-        return transitiveClosure;
     }
 
+    // apply the same logic as STARTS for Ekstazi
     private void checkSelectAll() throws IOException, MojoExecutionException {
         String cpString = Writer.pathToString(sureFireClassPath.getClassPath());
         List<String> sfPathElements = getCleanClassPath(cpString);
@@ -541,7 +542,7 @@ public class IncDetectorMojo extends DetectorMojo {
         return false;
     }
 
-    private Set<String> getImmutableList() {
+    private void getImmutableList() {
         if (immutableList == null) {
             immutableList = new HashSet<>();
 
@@ -574,7 +575,6 @@ public class IncDetectorMojo extends DetectorMojo {
             immutableList.add("java.awt.Cursor");
             immutableList.add("java.util.regex.Pattern");
         }
-        return immutableList;
     }
 
     private boolean isImmutable(Field field) {
