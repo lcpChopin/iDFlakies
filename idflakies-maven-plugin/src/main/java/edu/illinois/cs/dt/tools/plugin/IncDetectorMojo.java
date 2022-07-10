@@ -62,9 +62,7 @@ public class IncDetectorMojo extends DetectorMojo {
      */
     protected String artifactsDir;
 
-    protected String startsDir;
-
-    protected String ekstaziDir;
+    protected String RTSDir;
 
     protected ClassLoader loader;
 
@@ -88,8 +86,6 @@ public class IncDetectorMojo extends DetectorMojo {
 
     protected Path ekstaziSelectedTestsPath;
 
-    protected String ekstaziDependenciesFile;
-
     protected Path startsSelectedTestsPath;
 
     protected Path startsDependenciesPath;
@@ -108,7 +104,12 @@ public class IncDetectorMojo extends DetectorMojo {
         this.outputPath = PathManager.detectionResults();
         this.coordinates = mavenProject.getGroupId() + ":" + mavenProject.getArtifactId() + ":" + mavenProject.getVersion();
 
-        logger.runAndLogError(() -> defineSettings(logger, mavenProject));
+        try {
+            defineSettings(logger, mavenProject);
+            loadTestRunners(logger, mavenProject);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
         if (this.runner == null) {
             return;
         }
@@ -134,15 +135,9 @@ public class IncDetectorMojo extends DetectorMojo {
         Set<String> affectedTests = new HashSet<>();
         Set<String> allTests = new HashSet<>(getTestClasses(project, this.runner.framework()));
 
-        if (isEkstazi) {
-            selectedTests = getSelectedTests(ekstaziSelectedTestsPath);
-            // check if the classpath or jar checksum are changed; if they are changed, ekstazi should select all tests
-            checkSelectAll();
-        } else {
-            // starts itself has already checked if the classpath / jar checksum are changed
-            // thus we do not need to check it here.
-            selectedTests = getSelectedTests(startsSelectedTestsPath);
-        }
+        selectedTests = getSelectedTests();
+        // check if the classpath or jar checksum are changed; if they are changed, STARTs/ekstazi should select all tests
+        checkSelectAll();
 
         affectedTests.addAll(selectedTests);
         if (!selectMore) {
@@ -198,7 +193,13 @@ public class IncDetectorMojo extends DetectorMojo {
         return affectedTests;
     }
 
-    private Set<String> getSelectedTests(final Path path) {
+    private Set<String> getSelectedTests() {
+        Path path;
+        if (isEkstazi) {
+            path = ekstaziSelectedTestsPath;
+        } else {
+            path = startsSelectedTestsPath;
+        }
         selectedTests = new HashSet<>();
         try {
             BufferedReader in = Files.newBufferedReader(path, StandardCharsets.UTF_8);
@@ -215,7 +216,7 @@ public class IncDetectorMojo extends DetectorMojo {
     private void getTransitiveClosure() {
         if (isEkstazi) {
             try {
-                File ekstaziDirFile = new File(ekstaziDir);
+                File ekstaziDirFile = new File(RTSDir);
                 File[] files = ekstaziDirFile.listFiles();
                 for (File file : files) {
                     String fileName = file.toString().substring(file.toString().lastIndexOf(File.separator) + 1);
@@ -306,18 +307,16 @@ public class IncDetectorMojo extends DetectorMojo {
     }
 
     @Override
-    protected Void defineSettings(final ErrorLogger logger, final MavenProject project) throws IOException {
+    protected void defineSettings(final ErrorLogger logger, final MavenProject project) throws IOException {
         super.defineSettings(logger, project);
 
-        artifactsDir = getArtifactsDir();
-        startsDir = getStartsDir();
-        ekstaziDir = getEkstaziDir();
         selectMore = Configuration.config().getProperty("dt.incdetector.selectmore", false);
         selectAll = false;
         detectOrNot = Configuration.config().getProperty("dt.incdetector.detectornot", true);
         isEkstazi = Configuration.config().getProperty("dt.incdetector.ekstazi", false);
+        artifactsDir = getArtifactsDir();
+        RTSDir = getRTSDir();
         ekstaziSelectedTestsPath = relativePath(PathManager.ekstaziPath(), Paths.get("selected-tests"));
-        // ekstaziDependenciesFile = Configuration.config().getProperty("dt.incdetector.ekstazidependencies", "");
         startsSelectedTestsPath = relativePath(PathManager.startsPath(), Paths.get("selected-tests"));
         startsDependenciesPath = relativePath(PathManager.startsPath(), Paths.get("deps.zlc"));
 
@@ -326,8 +325,6 @@ public class IncDetectorMojo extends DetectorMojo {
 
         getSureFireClassPath(project);
         loader = createClassLoader(sureFireClassPath);
-
-        return null;
     }
 
     private String getArtifactsDir() throws FileNotFoundException {
@@ -341,26 +338,19 @@ public class IncDetectorMojo extends DetectorMojo {
         return artifactsDir;
     }
 
-    private String getStartsDir() throws FileNotFoundException {
-        if (startsDir == null) {
-            startsDir = PathManager.startsPath().toString();
-            File file = new File(startsDir);
+    private String getRTSDir() throws FileNotFoundException {
+        if (RTSDir == null) {
+            if (isEkstazi) {
+                RTSDir = PathManager.ekstaziPath().toString();
+            } else {
+                RTSDir = PathManager.startsPath().toString();
+            }
+            File file = new File(RTSDir);
             if (!file.mkdirs() && !file.exists()) {
-                throw new FileNotFoundException("I could not create artifacts dir: " + startsDir);
+                throw new FileNotFoundException("I could not create artifacts dir: " + RTSDir);
             }
         }
-        return startsDir;
-    }
-
-    private String getEkstaziDir() throws FileNotFoundException {
-        if (ekstaziDir == null) {
-            ekstaziDir = PathManager.ekstaziPath().toString();
-            File file = new File(ekstaziDir);
-            if (!file.mkdirs() && !file.exists()) {
-                throw new FileNotFoundException("I could not create artifacts dir: " + ekstaziDir);
-            }
-        }
-        return ekstaziDir;
+        return RTSDir;
     }
 
     private List<String> getCleanClassPath(String cp) {
@@ -377,7 +367,7 @@ public class IncDetectorMojo extends DetectorMojo {
             }
             classPathSet.add(paths[i]);
         }
-        for(String classPath: classPathSet) {
+        for (String classPath : classPathSet) {
             cpPaths.add(classPath);
         }
         return cpPaths;
@@ -426,7 +416,7 @@ public class IncDetectorMojo extends DetectorMojo {
         List<String> affectedTests = new ArrayList<>();
 
         String delimiter = testFramework.getDelimiter();
-        for (String test: tests) {
+        for (String test : tests) {
             String clazz = test.substring(0, test.lastIndexOf(delimiter));
             if (affectedTestClasses.contains(clazz)) {
                 affectedTests.add(test);
@@ -442,9 +432,9 @@ public class IncDetectorMojo extends DetectorMojo {
 
         String delimiter = testFramework.getDelimiter();
         List<String> classes = new ArrayList<>();
-        for(String test : tests){
+        for (String test : tests){
             String clazz = test.substring(0, test.lastIndexOf(delimiter));
-            if(!classes.contains(clazz)) {
+            if (!classes.contains(clazz)) {
                 classes.add(clazz);
             }
         }
@@ -587,7 +577,7 @@ public class IncDetectorMojo extends DetectorMojo {
             return true;
         }
 
-        for (String immutableTypeName: immutableList) {
+        for (String immutableTypeName : immutableList) {
             if ((field.getType().getName().equals(immutableTypeName)) && isFinal) {
                 return true;
             }

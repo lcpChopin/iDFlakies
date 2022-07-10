@@ -201,6 +201,12 @@ public class DetectorMojo extends AbstractIDFlakiesMojo {
         this.coordinates = mavenProject.getGroupId() + ":" + mavenProject.getArtifactId() + ":" + mavenProject.getVersion();
 
         long startTime = System.currentTimeMillis();
+        try {
+            defineSettings(logger, mavenProject);
+            loadTestRunners(logger, mavenProject);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
         logger.runAndLogError(() -> detectorExecute(logger, mavenProject, moduleRounds(coordinates)));
         timing(startTime);
     }
@@ -209,16 +215,14 @@ public class DetectorMojo extends AbstractIDFlakiesMojo {
         super.execute();
     }
 
-    protected Void defineSettings(final ErrorLogger logger, final MavenProject project) throws IOException {
+    protected void defineSettings(final ErrorLogger logger, final MavenProject mavenProject) throws IOException {
         Files.deleteIfExists(PathManager.errorPath());
+        Files.deleteIfExists(PathManager.timePath());
         Files.createDirectories(PathManager.cachePath());
         Files.createDirectories(PathManager.detectionResults());
-
-        loadTestRunners(logger, project); // may contain IO Exception
-        return null;
     }
 
-    protected void loadTestRunners(final ErrorLogger logger, final MavenProject project) throws IOException {
+    protected void loadTestRunners(final ErrorLogger logger, final MavenProject mavenProject) throws IOException {
         // Currently there could two runners, one for JUnit 4 and one for JUnit 5
         // If the maven project has both JUnit 4 and JUnit 5 tests, two runners will
         // be returned
@@ -279,7 +283,6 @@ public class DetectorMojo extends AbstractIDFlakiesMojo {
     }
 
     protected Void detectorExecute(final ErrorLogger logger, final MavenProject mavenProject, final int rounds) throws IOException {
-        defineSettings(logger, mavenProject);
         final List<String> tests = getTests(mavenProject, this.runner.framework());
 
         if (!tests.isEmpty()) {
