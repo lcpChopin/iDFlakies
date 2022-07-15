@@ -155,6 +155,9 @@ public class IncDetectorMojo extends DetectorMojo {
         // iter through the affected tests and find what each one depends on
         Set<String> processedClasses = new HashSet<>();
 
+        List<String> tests = super.getTests(mavenProject, this.runner.framework());
+        Set<Pair> pairSet = new HashSet<>();
+
         getImmutableList();
         for (String affectedTest : affectedTests) {
             Set<String> dependencies = transitiveClosure.get(affectedTest);
@@ -175,8 +178,34 @@ public class IncDetectorMojo extends DetectorMojo {
                             String upperLevelAffectedClass = clazz.getName();
                             Set<String> upperLevelAffectedTestClasses = reverseTransitiveClosure.get(upperLevelAffectedClass);
                             if (upperLevelAffectedTestClasses != null) {
+                                List<String> upperLevelAffectedTestsList = new ArrayList<>();
                                 for (String upperLevelAffectedTestClass : upperLevelAffectedTestClasses) {
                                     additionalTests.add(upperLevelAffectedTestClass);
+                                    for (String test : tests) {
+                                        if (test.startsWith(upperLevelAffectedTestClass) & !upperLevelAffectedTestsList.contains(test)) {
+                                            upperLevelAffectedTestsList.add(test);
+                                        }
+                                    }
+                                }
+                                System.out.println("NUM of Tests for class " + clazz + ": " + upperLevelAffectedTestsList.size());
+                                for (int i = 0; i < upperLevelAffectedTestsList.size() - 1; i++) {
+                                    for (int j = i + 1; j < upperLevelAffectedTestsList.size(); j++) {
+                                        Pair<String, String> pair = new Pair<>(upperLevelAffectedTestsList.get(i), upperLevelAffectedTestsList.get(j));
+                                        boolean repeat = false;
+                                        for (Pair pairItem : pairSet) {
+                                            if (pairItem.getKey().equals(pair.getKey()) && pairItem.getValue().equals(pair.getValue())) {
+                                                repeat = true;
+                                                break;
+                                            }
+                                            if (pairItem.getKey().equals(pair.getValue()) && pairItem.getValue().equals(pair.getKey())) {
+                                                repeat = true;
+                                                break;
+                                            }
+                                        }
+                                        if (repeat == false) {
+                                            pairSet.add(pair);
+                                        }
+                                    }
                                 }
                             }
                             break;
@@ -190,6 +219,8 @@ public class IncDetectorMojo extends DetectorMojo {
         }
 
         affectedTests.addAll(additionalTests);
+        System.out.println("WHOLE NUMBER OF PAIRS: " + tests.size() * (tests.size() - 1) / 2);
+        System.out.println("SELECTED NUMBER OF PAIRS: " + pairSet.size());
         return affectedTests;
     }
 
