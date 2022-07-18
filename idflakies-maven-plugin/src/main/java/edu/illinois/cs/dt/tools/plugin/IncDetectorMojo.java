@@ -1,6 +1,8 @@
 package edu.illinois.cs.dt.tools.plugin;
 
 import com.google.common.base.Preconditions;
+import edu.illinois.cs.dt.tools.detection.detectors.Detector;
+import edu.illinois.cs.dt.tools.detection.detectors.DetectorFactory;
 import edu.illinois.cs.dt.tools.utility.ErrorLogger;
 import edu.illinois.cs.dt.tools.utility.Level;
 import edu.illinois.cs.dt.tools.utility.Logger;
@@ -37,13 +39,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 
 import static edu.illinois.starts.helpers.ZLCHelper.STAR_FILE;
 
@@ -96,6 +92,14 @@ public class IncDetectorMojo extends DetectorMojo {
 
     private static Set<String> immutableList;
 
+    private List<String> finalSelectedTests;
+
+    private Set<Pair> pairSet;
+
+    private static int[][] r;
+
+    private List<List<String>> orders;
+
     @Override
     public void execute() {
         superExecute();
@@ -125,9 +129,42 @@ public class IncDetectorMojo extends DetectorMojo {
         }
         timing(startTime);
 
+        try {
+            finalSelectedTests = getTests(mavenProject, this.runner.framework());
+            storeOrders();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
         startTime = System.currentTimeMillis();
         logger.runAndLogError(() -> detectorExecute(logger, mavenProject, moduleRounds(coordinates)));
         timing(startTime);
+    }
+
+    // specilized for Tuscan
+    protected Void detectorExecute(final ErrorLogger logger, final MavenProject mavenProject, final int rounds) throws IOException {
+        final List<String> tests = getTests(mavenProject, this.runner.framework());
+
+        if (!tests.isEmpty()) {
+            Files.createDirectories(outputPath);
+            Files.write(PathManager.originalOrderPath(), String.join(System.lineSeparator(), getOriginalOrder(mavenProject, this.runner.framework(), true)).getBytes());
+            Files.write(PathManager.selectedTestPath(), String.join(System.lineSeparator(), tests).getBytes());
+            final Detector detector;
+            if (DetectorFactory.detectorType().equals("tuscan")){
+                System.out.println("TUSCAN LA!!!");
+                detector = DetectorFactory.makeDetector(this.runner, mavenProject.getBasedir(), tests, rounds, orders);
+            } else {
+                detector = DetectorFactory.makeDetector(this.runner, mavenProject.getBasedir(), tests, rounds);
+            }
+            Logger.getGlobal().log(Level.INFO, "Created dependent test detector (" + detector.getClass() + ").");
+            detector.writeTo(outputPath);
+        } else {
+            String errorMsg = "Module has no tests, not running detector.";
+            Logger.getGlobal().log(Level.INFO, errorMsg);
+            logger.writeError(errorMsg);
+        }
+
+        return null;
     }
 
     // TODO: make Starts and Ekstazi's deps similar
@@ -156,7 +193,7 @@ public class IncDetectorMojo extends DetectorMojo {
         Set<String> processedClasses = new HashSet<>();
 
         List<String> tests = super.getTests(mavenProject, this.runner.framework());
-        Set<Pair> pairSet = new HashSet<>();
+        pairSet = new HashSet<>();
 
         getImmutableList();
         for (String affectedTest : affectedTests) {
@@ -190,20 +227,29 @@ public class IncDetectorMojo extends DetectorMojo {
                                 System.out.println("NUM of Tests for class " + clazz + ": " + upperLevelAffectedTestsList.size());
                                 for (int i = 0; i < upperLevelAffectedTestsList.size() - 1; i++) {
                                     for (int j = i + 1; j < upperLevelAffectedTestsList.size(); j++) {
-                                        Pair<String, String> pair = new Pair<>(upperLevelAffectedTestsList.get(i), upperLevelAffectedTestsList.get(j));
-                                        boolean repeat = false;
+                                        Pair<String, String> pair1 = new Pair<>(upperLevelAffectedTestsList.get(i), upperLevelAffectedTestsList.get(j));
+                                        Pair<String, String> pair2 = new Pair<>(upperLevelAffectedTestsList.get(j), upperLevelAffectedTestsList.get(i));
+                                        boolean repeat1 = false;
+                                        boolean repeat2 = false;
                                         for (Pair pairItem : pairSet) {
-                                            if (pairItem.getKey().equals(pair.getKey()) && pairItem.getValue().equals(pair.getValue())) {
-                                                repeat = true;
-                                                break;
+                                            if (pairItem.getKey().equals(pair1.getKey()) && pairItem.getValue().equals(pair1.getValue())) {
+                                                repeat1 = true;
+                                                if (repeat2) {
+                                                    break;
+                                                }
                                             }
-                                            if (pairItem.getKey().equals(pair.getValue()) && pairItem.getValue().equals(pair.getKey())) {
-                                                repeat = true;
-                                                break;
+                                            if (pairItem.getKey().equals(pair2.getKey()) && pairItem.getValue().equals(pair2.getValue())) {
+                                                repeat2 = true;
+                                                if (repeat1) {
+                                                    break;
+                                                }
                                             }
                                         }
-                                        if (repeat == false) {
-                                            pairSet.add(pair);
+                                        if (repeat1 == false) {
+                                            pairSet.add(pair1);
+                                        }
+                                        if (repeat2 == false) {
+                                            pairSet.add(pair2);
                                         }
                                     }
                                 }
@@ -219,9 +265,91 @@ public class IncDetectorMojo extends DetectorMojo {
         }
 
         affectedTests.addAll(additionalTests);
-        System.out.println("WHOLE NUMBER OF PAIRS: " + tests.size() * (tests.size() - 1) / 2);
+        System.out.println("WHOLE NUMBER OF PAIRS: " + tests.size() * (tests.size() - 1));
         System.out.println("SELECTED NUMBER OF PAIRS: " + pairSet.size());
         return affectedTests;
+    }
+
+    private void storeOrders() {
+        // obtain the TuscanSquare for the size of tests
+        int n = finalSelectedTests.size();
+        generateTuscanSquare(n);
+        Set<Pair> remainingPairs = new HashSet<>(pairSet);
+        System.out.println("INITIAL REMAINING PAIRS: " + remainingPairs.size());
+
+        // transfer the TuscanSquare to be actual orders
+        List<List<String>> transformedOrders = new LinkedList<>();
+        for (int[] ri : r) {
+            List<String> oneOrder = new LinkedList<>();
+            for (int index = 0; index < ri.length - 1; index ++) {
+                oneOrder.add(finalSelectedTests.get(ri[index]));
+            }
+            transformedOrders.add(oneOrder);
+        }
+
+        // deal with the first order
+        orders = new LinkedList<>();
+        List<String> firstOrder = transformedOrders.get(0);
+        // System.out.println("first order: " + firstOrder.toString());
+        // System.out.println("first order size: " + firstOrder.size());
+        orders.add(firstOrder);
+        for (int i = 0 ; i < firstOrder.size() - 1 ; i++) {
+            Pair toBeRemoved = new Pair<>(firstOrder.get(i), firstOrder.get(i + 1));
+            /* for (Pair pairItem : remainingPairs) {
+                if (pairItem.getKey().equals(firstOrder.get(i)) && pairItem.getValue().equals(firstOrder.get(i + 1))) {
+                    toBeRemoved = pairItem;
+                    break;
+                }
+            } */
+            remainingPairs.remove(toBeRemoved);
+        }
+        transformedOrders.remove(0);
+
+        // deal with the other orders
+        while (!remainingPairs.isEmpty()) {
+            int maxAdditionalSize = 0;
+            int initialSize = remainingPairs.size();
+            System.out.println("INITIAL SIZE: " + initialSize);
+            int maxIndex = 0;
+            for (int i = 0 ; i < transformedOrders.size() ; i++) {
+                List<String> orderItem = transformedOrders.get(i);
+                Set<Pair> finalRemainingPairs = new HashSet<>(remainingPairs);
+                for (int j = 0 ; j < orderItem.size() - 1 ; j++) {
+                    Pair toBeRemoved = new Pair<>(orderItem.get(j), orderItem.get(j + 1));
+                    /* for (Pair pairItem : finalRemainingPairs) {
+                        if (pairItem.getKey().equals(orderItem.get(j)) && pairItem.getValue().equals(orderItem.get(j + 1))) {
+                            toBeRemoved = pairItem;
+                            break;
+                        }
+                    } */
+                    finalRemainingPairs.remove(toBeRemoved);
+                }
+                int finalSize = finalRemainingPairs.size();
+                // System.out.println("FINAL SIZE: " + finalSize);
+                if (initialSize - finalSize > maxAdditionalSize) {
+                    maxAdditionalSize = initialSize - finalSize;
+                    maxIndex = i;
+                    // System.out.println("maxAdditionalSize(change to): " + maxAdditionalSize);
+                }
+            }
+            List<String> maxOrder = transformedOrders.get(maxIndex);
+            orders.add(maxOrder);
+            for (int k = 0 ; k < maxOrder.size() - 1 ; k++) {
+                Pair toBeRemoved = new Pair<>(maxOrder.get(k), maxOrder.get(k + 1));
+                /* for (Pair pairItem : remainingPairs) {
+                    if (pairItem.getKey().equals(maxOrder.get(k)) && pairItem.getValue().equals(maxOrder.get(k + 1))) {
+                        toBeRemoved = pairItem;
+                        break;
+                    }
+                } */
+                remainingPairs.remove(toBeRemoved);
+            }
+            System.out.println("finalMaxAdditionalSize(change to): " + maxAdditionalSize);
+            // System.out.println("finalOrder: " + maxOrder.toString());
+            transformedOrders.remove(maxIndex);
+        }
+
+        System.out.println("FINAL NUM OF ORDERS: " + orders.size());
     }
 
     private Set<String> getSelectedTests() {
@@ -652,5 +780,110 @@ public class IncDetectorMojo extends DetectorMojo {
             e.printStackTrace();
         }
         return "";
+    }
+
+    private static void helper(int[] a, int i) {
+        System.arraycopy(a, 0, r[i], 0, a.length);
+    }
+
+    private static void generateTuscanSquare(int n) {
+        int nn = n;
+        while((n-1) % 4 == 0 && n != 1 && n != 9) n = (n-1)/2+1;
+
+        r = new int[nn][];
+        for (int i = 0; i < nn; i++) {
+            r[i] = new int[nn+1];
+        }
+
+        if (n % 2 == 0) {
+            // https://mathoverflow.net/questions/60856/hamilton-paths-in-k-2n/60859#60859
+            int[] a = new int[n];
+            for (int i = 0; i < n; i += 2) {
+                a[i] = i / 2;
+                a[i+1] = n - 1 - a[i];
+            }
+            helper(a, 0);
+            for (int j = 1; j < n; j++) {
+                for (int i = 0; i < n; i++) {
+                    a[i] = (a[i] + 1) % n;
+                }
+                helper(a, j);
+            }
+        } else if (n % 4 == 3) {
+            int k = (n - 3) / 4;
+            int[] b = new int[n];
+            for (int i = 0; i < n - 1; i++) {
+                int p = (i == 0) ? 1 :
+                        ((i == k + 1) ? 4*k + 2 :
+                                ((i == 2*k + 2) ? 3 :
+                                        ((i == 3*k + 2) ? 4*k : 2*k)));
+                int[] a = new int[n];
+                for (int j = 0; j < n; j++) {
+                    a[(j < p) ? n+j-p : j-p] = (j == 0) ? (n - 1) : (i + ((j % 2 == 0) ? (j / 2) : (n - 1 - (j - 1) / 2))) % (n - 1);
+                }
+                b[a[n-1]] = a[0];
+                helper(a, i);
+            }
+            int[] t = new int[n];
+            t[0] = n - 1;
+            for (int i = 1; i < n; i++) {
+                t[i] = b[t[i-1]];
+            }
+            helper(t, n-1);
+        } else if (n == 9) {
+            int[][] t = {{0,1,7,2,6,3,5,4,8},
+                    {3,7,4,6,5,8,1,2,0},
+                    {1,4,0,5,7,6,8,2,3},
+                    {6,0,7,8,3,4,2,5,1},
+                    {2,7,1,0,8,4,5,3,6},
+                    {7,3,0,2,1,8,5,6,4},
+                    {5,0,4,1,3,2,8,6,7},
+                    {4,3,8,7,0,6,1,5,2},
+                    {8,0,3,1,6,2,4,7,5}};
+            for (int i = 0; i < 9; i++) {
+                helper(t[i], i);
+            }
+        }
+        else assert(false);
+
+        while (nn != n){
+            // n + 1 == 4*m - 2
+            // https://www.sciencedirect.com/science/article/pii/0095895680900441
+
+            n = n * 2 - 1;
+
+            int h = (n + 1) / 2;
+
+            for (int i = 0; i < h; i++) {
+                for (int j = 0; j < h; j++) {
+                    r[i][n-j] = r[i][j] + h;
+                }
+            }
+            for (int i = h; i < n; i++) {
+                /*
+                for (int j = 0; j < n+1; j++) {
+                    r[i][j] = ((j % 2 == 0) ? 0 : h) + (i-h + ((j % 2 == 0) ? (j / 2) : (n - (j - 1) / 2))) % h;
+                }
+                */
+                for (int j = 0; j < h - 1; j++) {
+                    r[i][j] = ((j % 2 == 0) ? 0 : h) + (i-h + ((j % 2 == 0) ? (j / 2) : (h - 2 - (j - 1) / 2))) % (h - 1);
+                }
+                r[i][h-1] = h-1;
+                for (int j = h; j < n + 1; j++) {
+                    r[i][j] = ((j % 2 == 0) ? 0 : h) + r[i][j-h] % h;
+                }
+            }
+            for (int i = 0; i < n; i++) {
+                int l = 0;
+                for (; l < n; l++) {
+                    if (r[i][l] == n) break;
+                }
+                int[] t = new int[n];
+                System.arraycopy(r[i], l+1, t, 0, n-l);
+                System.arraycopy(r[i], 0, t, n-l, l);
+
+                System.arraycopy(t, 0, r[i], 0, n);
+            }
+        }
     }
 }

@@ -28,4 +28,11 @@ public class DetectorFactory {
 
         return new RandomDetector("random", baseDir, runner, rounds, tests);
     }
+
+    public static Detector makeDetector(final InstrumentingSmartRunner runner, final File baseDir, final List<String> tests, final int rounds, final List<List<String>> orders) {
+        if (detectorType().equals("tuscan")) {
+            return new TuscanDetector(runner, baseDir, rounds, tests, detectorType(), orders);
+        }
+        return new RandomDetector("random", baseDir, runner, rounds, tests);
+    }
 }
