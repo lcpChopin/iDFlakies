@@ -42,6 +42,11 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.*;
 
+import com.microsoft.z3.*;
+
+// import org.sosy_lab.java_smt.SolverContextFactory;
+// import org.sosy_lab.java_smt.api.SolverContext;
+
 import static edu.illinois.starts.helpers.ZLCHelper.STAR_FILE;
 
 @Mojo(name = "incdetect", defaultPhase = LifecyclePhase.TEST, requiresDependencyResolution = ResolutionScope.TEST)
@@ -136,8 +141,10 @@ public class IncDetectorMojo extends DetectorMojo {
 
         try {
             finalSelectedTests = getTests(mavenProject, this.runner.framework());
+            // storeOrdersByZ3();
+            storeClassOrdersByZ3();
             // storeOrders();
-            storeOrdersByClasses();
+            // storeOrdersByClasses();
             // storeOrdersBasedOnSymmetric();
             // storeClassesOrdersBasedOnSymmetric();
         } catch (IOException e) {
@@ -276,6 +283,146 @@ public class IncDetectorMojo extends DetectorMojo {
         System.out.println("WHOLE NUMBER OF PAIRS: " + allTestMethods.size() * (allTestMethods.size() - 1));
         System.out.println("SELECTED NUMBER OF PAIRS: " + pairSet.size());
         return affectedTests;
+    }
+
+    private void storeOrdersByZ3() {
+        int n = finalSelectedTests.size();
+        Set<Pair> pairIntegerSet = new HashSet<Pair>();
+        for (Pair pairItem: pairSet) {
+            Pair pair = new Pair(finalSelectedTests.indexOf(pairItem.getKey()), finalSelectedTests.indexOf(pairItem.getValue()));
+            pairIntegerSet.add(pair);
+        }
+
+        // ShutdownManager shutdown = ShutdownManager.create();
+
+        // SolverContext is a class wrapping a solver context.
+        // Solver can be selected either using an argument or a configuration option
+        // inside `config`.
+        // SolverContext context = SolverContextFactory.createSolverContext(
+        //         config, logger, shutdown.getNotifier(), SolverContextFactory.Solvers.SMTINTERPOL);
+
+        com.microsoft.z3.Global.ToggleWarningMessages(true);
+
+        System.out.print("Z3 Major Version: ");
+        System.out.println(Version.getMajor());
+        System.out.print("Z3 Full Version: ");
+        System.out.println(Version.getString());
+        System.out.print("Z3 Full Version String: ");
+        System.out.println(Version.getFullVersion());
+
+        {
+            HashMap<String, String> cfg = new HashMap<String, String>();
+            cfg.put("model", "true");
+            Context ctx = new Context(cfg);
+
+            List intExprArray = new LinkedList<IntExpr>();
+            // Goal g = ctx.mkGoal(true, false, false);
+            Optimize opt = ctx.mkOptimize();
+            // need to order n numbers, create n intExpr/ function
+            for (int i = 0; i < n; i ++) {
+                IntExpr newIntExpr = (IntExpr) ctx.mkConst(ctx.mkSymbol(i), ctx.getIntSort());
+                intExprArray.add(newIntExpr);
+                opt.Add(ctx.mkAnd(ctx.mkGe(newIntExpr, ctx.mkInt(0)), ctx.mkLe(newIntExpr, ctx.mkInt(n - 1))));
+            }
+            for (int i = 0; i < n - 1; i ++) {
+                for (int j = i + 1; j < n ; j ++) {
+                    opt.Add(ctx.mkNot(ctx.mkEq((IntExpr) intExprArray.get(i), (IntExpr) intExprArray.get(j))));
+                }
+            }
+
+            System.out.println(opt.Check());
+            System.out.println(opt.getModel());
+            System.out.println("Opt");
+
+            IntExpr numsExpr = (IntExpr) ctx.mkConst(ctx.mkSymbol("sum"), ctx.getIntSort());
+
+            for (Pair pair : pairIntegerSet) {
+                int leftIndex = Integer.valueOf(pair.getKey().toString()).intValue();
+                int rightIndex = Integer.valueOf(pair.getValue().toString()).intValue();
+                BoolExpr f = ctx.mkEq(ctx.mkAdd((IntExpr) intExprArray.get(leftIndex), ctx.mkInt(1)), (IntExpr) intExprArray.get(rightIndex));
+                IntNum one = ctx.mkInt(1);
+                IntNum zero = ctx.mkInt(0);
+                Expr<IntSort> ite = ctx.mkITE(f, one, zero);
+                numsExpr = (IntExpr) ctx.mkAdd(numsExpr, ite);
+            }
+            Optimize.Handle<IntSort> mx = opt.MkMaximize(numsExpr);
+            System.out.println(opt.Check());
+            System.out.println(opt.getModel());
+            System.out.println(mx.getValue());
+        }
+    }
+
+    private void storeClassOrdersByZ3() {
+        int n = affectedTestClasses.size();
+        List<String> affectedTestClassesList = new LinkedList<>();
+        for (String affectedTestClass : affectedTestClasses) {
+            affectedTestClassesList.add(affectedTestClass);
+        }
+        Set<Pair> pairIntegerSet = new HashSet<Pair>();
+        for (Pair pairItem: classesPairSet) {
+            Pair pair = new Pair(affectedTestClassesList.indexOf(pairItem.getKey()), affectedTestClassesList.indexOf(pairItem.getValue()));
+            pairIntegerSet.add(pair);
+        }
+
+        // ShutdownManager shutdown = ShutdownManager.create();
+
+        // SolverContext is a class wrapping a solver context.
+        // Solver can be selected either using an argument or a configuration option
+        // inside `config`.
+        // SolverContext context = SolverContextFactory.createSolverContext(
+        //         config, logger, shutdown.getNotifier(), SolverContextFactory.Solvers.SMTINTERPOL);
+
+        com.microsoft.z3.Global.ToggleWarningMessages(true);
+
+        System.out.print("Z3 Major Version: ");
+        System.out.println(Version.getMajor());
+        System.out.print("Z3 Full Version: ");
+        System.out.println(Version.getString());
+        System.out.print("Z3 Full Version String: ");
+        System.out.println(Version.getFullVersion());
+
+        {
+            HashMap<String, String> cfg = new HashMap<String, String>();
+            cfg.put("model", "true");
+            Context ctx = new Context(cfg);
+
+            List intExprArray = new LinkedList<IntExpr>();
+            // Goal g = ctx.mkGoal(true, false, false);
+            Optimize opt = ctx.mkOptimize();
+            // need to order n numbers, create n intExpr/ function
+            for (int i = 0; i < n; i ++) {
+                IntExpr newIntExpr = (IntExpr) ctx.mkConst(ctx.mkSymbol(i), ctx.getIntSort());
+                intExprArray.add(newIntExpr);
+                opt.Add(ctx.mkAnd(ctx.mkGe(newIntExpr, ctx.mkInt(0)), ctx.mkLe(newIntExpr, ctx.mkInt(n - 1))));
+            }
+            for (int i = 0; i < n - 1; i ++) {
+                for (int j = i + 1; j < n ; j ++) {
+                    opt.Add(ctx.mkNot(ctx.mkEq((IntExpr) intExprArray.get(i), (IntExpr) intExprArray.get(j))));
+                }
+            }
+
+            System.out.println(opt.Check());
+            System.out.println(opt.getModel());
+            System.out.println("Opt");
+
+            //IntExpr numsExpr = (IntExpr) ctx.mkConst(ctx.mkSymbol("sum"), ctx.getIntSort());
+            IntExpr numsExpr = ctx.mkInt(0);
+
+            for (Pair pair : pairIntegerSet) {
+                int leftIndex = Integer.valueOf(pair.getKey().toString()).intValue();
+                int rightIndex = Integer.valueOf(pair.getValue().toString()).intValue();
+                BoolExpr f = ctx.mkEq(ctx.mkAdd((IntExpr) intExprArray.get(leftIndex), ctx.mkInt(1)), (IntExpr) intExprArray.get(rightIndex));
+                IntNum one = ctx.mkInt(1);
+                IntNum zero = ctx.mkInt(0);
+                Expr<IntSort> ite = ctx.mkITE(f, one, zero);
+                numsExpr = (IntExpr) ctx.mkAdd(numsExpr, ite);
+            }
+            System.out.println(ctx);
+            Optimize.Handle<IntSort> mx = opt.MkMaximize(numsExpr);
+            System.out.println(opt.Check());
+            System.out.println(opt.getModel());
+            System.out.println(mx.getValue());
+        }
     }
 
     private void storeOrders() {

@@ -99,5 +99,35 @@
             <artifactId>starts-maven-plugin</artifactId>
             <version>1.3</version>
         </dependency>
+        <dependency>
+            <groupId>tools.aqua</groupId>
+            <artifactId>z3-turnkey</artifactId>
+            <version>4.8.17</version>
+        </dependency>
+        <!-- <dependency>
+            <groupId>org.sosy-lab</groupId>
+            <artifactId>java-smt</artifactId>
+            <version>3.13.3</version>
+        </dependency>
+        <dependency>
+            <groupId>org.sosy-lab</groupId>
+            <artifactId>javasmt-solver-z3</artifactId>
+            <version>4.10.1</version>
+            <type>pom</type>
+        </dependency>
+        <dependency>
+            <groupId>org.sosy-lab</groupId>
+            <artifactId>javasmt-solver-z3</artifactId>
+            <version>4.10.1</version>
+            <type>dylib</type>
+            <classifier>libz3</classifier>
+        </dependency>
+        <dependency>
+            <groupId>org.sosy-lab</groupId>
+            <artifactId>javasmt-solver-z3</artifactId>
+            <version>4.10.1</version>
+            <type>dylib</type>
+            <classifier>libz3java</classifier>
+        </dependency> -->
     </dependencies>
 </project>
