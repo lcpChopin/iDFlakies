@@ -35,9 +35,7 @@ import java.lang.reflect.Modifier;
 import java.net.URL;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.nio.file.*;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.*;
@@ -98,6 +96,8 @@ public class IncDetectorMojo extends DetectorMojo {
 
     private static Set<String> immutableList;
 
+    private List<String> allTestClasses;
+
     private List<String> allTestMethods;
 
     private List<String> finalSelectedTests;
@@ -142,11 +142,13 @@ public class IncDetectorMojo extends DetectorMojo {
         try {
             finalSelectedTests = getTests(mavenProject, this.runner.framework());
             // storeOrdersByZ3();
-            storeClassOrdersByZ3();
+            // storeClassOrdersByZ3();
             // storeOrders();
             // storeOrdersByClasses();
             // storeOrdersBasedOnSymmetric();
             // storeClassesOrdersBasedOnSymmetric();
+            storeClassesOrdersBasedOnSymmetricWhole();
+            writeNumOfOrders(orders, artifactsDir);
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -185,7 +187,10 @@ public class IncDetectorMojo extends DetectorMojo {
     // TODO: make Starts and Ekstazi's deps similar
     private Set<String> computeAffectedTests(final MavenProject project) throws IOException, MojoExecutionException, ClassNotFoundException {
         Set<String> affectedTests = new HashSet<>();
-        Set<String> allTests = new HashSet<>(getTestClasses(project, this.runner.framework()));
+        // *** will change back in the future
+        allTestClasses = getTestClasses(project, this.runner.framework());
+        Set<String> allTests = new HashSet<>(allTestClasses);
+
 
         selectedTests = getSelectedTests();
         // check if the classpath or jar checksum are changed; if they are changed, STARTs/ekstazi should select all tests
@@ -490,12 +495,6 @@ public class IncDetectorMojo extends DetectorMojo {
         orders = new LinkedList<>();
 
         int n = finalSelectedTests.size();
-        /* int middle = 0;
-        if (n % 2 == 1) {
-            middle = (n - 1) / 2;
-        } else {
-            middle = n / 2;
-        } */
         Set<Pair> remainingPairs = new HashSet<>(pairSet);
         Set<Pair> symmetricRemainingPairs = new HashSet<>(pairSet);
 
@@ -614,26 +613,23 @@ public class IncDetectorMojo extends DetectorMojo {
                                     rightEnd = false;
                                     leftItem = occurrenceSortedList.get(j).getKey();
                                     rightItem = occurrenceSortedList.get(j).getKey();
-                                    order.add(leftBorder, leftItem);
                                     System.out.println("NEWLEFTINDEX???: " + leftItem);
-                                    System.out.println("BORDER???: " + leftBorder + " " + rightBorder);
                                     leftBorder = rightBorder;
                                     rightBorder = rightBorder + 1;
-                                    // filled++;
+                                    order.add(leftBorder, leftItem);
                                 }
                             }
                             if (j == occurrenceSortedList.size() || occurrenceSortedList.size() == 0) {
                                 for (String finalSelectedTest : finalSelectedTests) {
                                     if (!order.contains(finalSelectedTest)) {
-                                        order.add(leftBorder, finalSelectedTest);
+                                        leftEnd = false;
+                                        rightEnd = false;
                                         System.out.println("LEFTINDEX???: " + finalSelectedTest);
                                         leftItem = finalSelectedTest;
                                         rightItem = finalSelectedTest;
                                         leftBorder = rightBorder;
                                         rightBorder = rightBorder + 1;
-                                        // filled ++;
-                                        leftEnd = false;
-                                        rightEnd = false;
+                                        order.add(leftBorder, finalSelectedTest);
                                         break;
                                     }
                                 }
@@ -721,14 +717,12 @@ public class IncDetectorMojo extends DetectorMojo {
                                     rightItem = occurrenceSortedList.get(j).getKey();
                                     order.add(rightBorder, leftItem);
                                     System.out.println("NEWRIGHTINDEX???: " + leftItem);
-                                    System.out.println("BORDER???: " + leftBorder + " " + rightBorder);
                                     leftBorder = rightBorder;
                                     rightBorder = rightBorder + 1;
-                                    // filled++;
                                 }
                             }
                             if (j == occurrenceSortedList.size() || occurrenceSortedList.size() == 0) {
-                                 for (String finalSelectedTest : finalSelectedTests) {
+                                for (String finalSelectedTest : finalSelectedTests) {
                                     if (!order.contains(finalSelectedTest)) {
                                         order.add(rightBorder, finalSelectedTest);
                                         System.out.println("RIGHTINDEX???: " + finalSelectedTest);
@@ -738,7 +732,6 @@ public class IncDetectorMojo extends DetectorMojo {
                                         rightBorder = rightBorder + 1;
                                         leftEnd = false;
                                         rightEnd = false;
-                                        // filled ++;
                                         break;
                                     }
                                 }
@@ -768,191 +761,563 @@ public class IncDetectorMojo extends DetectorMojo {
     }
 
     private void storeClassesOrdersBasedOnSymmetric() {
-        System.out.println("ALLCLASSPAIRS: " + classesPairSet.toString());
         orders = new LinkedList<>();
 
-        List<List<String>> transformedOrders = new LinkedList<>();
+        int n = finalSelectedTests.size();
+        Set<Pair> remainingPairs = new HashSet<>(pairSet);
+        Set<Pair> symmetricRemainingPairs = new HashSet<>(pairSet);
 
-        int n = affectedTestClasses.size();
-        /* int middle = 0;
-        if (n % 2 == 1) {
-            middle = (n - 1) / 2;
-        } else {
-            middle = n / 2;
-        } */
-        Set<Pair> remainingPairs = new HashSet<>(classesPairSet);
-        Set<Pair> symmetricRemainingPairs = new HashSet<>(classesPairSet);
+        Map<String, List<String>> occurrenceMap = new HashedMap();
+        for (Pair pairItem : remainingPairs) {
+            List<String> valueList = occurrenceMap.getOrDefault(pairItem.getKey(), new LinkedList<>());
+            valueList.add((String) pairItem.getValue());
+            occurrenceMap.put((String) pairItem.getKey(), valueList);
+            List<String> keyList = occurrenceMap.getOrDefault(pairItem.getValue(), new LinkedList<>());
+            keyList.add((String) pairItem.getKey());
+            occurrenceMap.put((String) pairItem.getValue(), keyList);
+        }
+        Map<String, List<String>> occurrenceMapDefault = new HashedMap(occurrenceMap);
+        List<Map.Entry<String, List<String>>> occurrenceSortedList = new ArrayList<>(occurrenceMap.entrySet());
+        // descending order
+        Collections.sort(occurrenceSortedList, (o1, o2) -> (o2.getValue().size() - o1.getValue().size()));
 
         // deal with the other orders
         while (!remainingPairs.isEmpty()) {
-            /* System.out.println("REMAINING PAIRS SIZE: " + remainingPairs.size());
+            System.out.println("REMAINING PAIRS SIZE: " + remainingPairs.size());
             System.out.println("SEMMETRIC REMAINING PAIRS SIZE: " + symmetricRemainingPairs.size());
-            System.out.println("CURRENT ORDER SIZE: " + transformedOrders.size()); */
-            Map<String, List<String>> occurrenceMap = new HashedMap();
+            System.out.println("CURRENT ORDER SIZE: " + orders.size());
+            occurrenceMap = new HashedMap();
             // Set<Pair> tmpPairs = new HashSet<>(remainingPairs);
             for (Pair pairItem : remainingPairs) {
                 List<String> valueList = occurrenceMap.getOrDefault(pairItem.getKey(), new LinkedList<>());
                 valueList.add((String) pairItem.getValue());
                 occurrenceMap.put((String) pairItem.getKey(), valueList);
                 List<String> keyList = occurrenceMap.getOrDefault(pairItem.getValue(), new LinkedList<>());
-                valueList.add((String) pairItem.getKey());
+                keyList.add((String) pairItem.getKey());
                 occurrenceMap.put((String) pairItem.getValue(), keyList);
             }
-            List<Map.Entry<String, List<String>>> occurrenceSortedList = new ArrayList<>(occurrenceMap.entrySet());
+            occurrenceSortedList = new ArrayList<>(occurrenceMap.entrySet());
             // descending order
             Collections.sort(occurrenceSortedList, (o1, o2) -> (o2.getValue().size() - o1.getValue().size()));
 
             // System.out.println("PRINT:" + occurrenceSortedList.toString());
             // List<Map.Entry<String, List<String>>> occurrenceSymmetricSortedList = new ArrayList<>(occurrenceSortedList);
 
-            List<String> order = new LinkedList<>();// Arrays.asList(new String[n]);
-            order.add(occurrenceSortedList.get(0).getKey());
-            // order.set(middle, occurrenceSortedList.get(0).getKey());
-            // int left = middle - 1;
-            // int right = middle + 1;
-            String leftItem = occurrenceSortedList.get(0).getKey();
-            String rightItem = occurrenceSortedList.get(0).getKey();
-            occurrenceSortedList.remove(0);
-            /* List<Map.Entry<String, List<String>>> occurrenceSortedLeftList = new ArrayList<>(occurrenceSortedList);
-            occurrenceSortedLeftList.remove(0); */
-            int filled = 1;
-            int s = 0;
+            List<String> order = new LinkedList<>();
+            order.add(0, occurrenceSortedList.get(0).getKey());
             int leftBorder = 0;
             int rightBorder = 1;
-            while (filled < n) {
-                boolean leftFound = false;
-                int i = 0;
-                if (!symmetricRemainingPairs.isEmpty()) {
-                    for (i = 0; i < occurrenceSortedList.size(); i++) {
-                        if (occurrenceSortedList.get(i).getKey().equals(leftItem)) {
-                            continue;
-                        }
-                        List<String> leftValue = occurrenceMap.getOrDefault(leftItem, new LinkedList<>());
-                        // current test that has most pairs with other tests
-                        String tmp = occurrenceSortedList.get(i).getKey();
-                        Pair toBeRemoved = new Pair<>(tmp, leftItem);
-                        if (leftValue.contains(tmp) && symmetricRemainingPairs.contains(toBeRemoved)) {
-                            order.add(leftBorder, tmp);
-                            remainingPairs.remove(toBeRemoved);
-                            symmetricRemainingPairs.remove(toBeRemoved);
-                            Pair reverseToBeRemoved = new Pair<>(leftItem, tmp);
-                            symmetricRemainingPairs.remove(reverseToBeRemoved);
-                            leftItem = tmp;
-                            // System.out.println("LEFTINDEX?: " + left);
-                            leftFound = true;
-                            filled ++;
-                            break;
-                        }
-                    }
-                    if (i < occurrenceSortedList.size()) {
-                        occurrenceSortedList.remove(i);
-                    }
-                    Collections.sort(occurrenceSortedList, (o1, o2) -> (o2.getValue().size() - o1.getValue().size()));
-                } else if (!remainingPairs.isEmpty()) {
-                    for (i = 0; i < occurrenceSortedList.size(); i++) {
-                        if (occurrenceSortedList.get(i).getKey().equals(leftItem)) {
-                            continue;
-                        }
-                        List<String> leftValue = occurrenceMap.getOrDefault(leftItem, new LinkedList<>());
-                        // current test that has most pairs with other tests
-                        String tmp = occurrenceSortedList.get(i).getKey();
-                        Pair toBeRemoved = new Pair<>(tmp, leftItem);
-                        if (leftValue.contains(tmp) && remainingPairs.contains(toBeRemoved)) {
-                            order.add(leftBorder, tmp);
-                            remainingPairs.remove(new Pair<>(tmp, leftItem));
-                            leftItem = tmp;
-                            // System.out.println("LEFTINDEX??: " + left);
-                            leftFound = true;
-                            filled ++;
-                            break;
+            String leftItem = occurrenceSortedList.get(0).getKey();
+            String rightItem = occurrenceSortedList.get(0).getKey();
+            // occurrenceSortedList.remove(0);
+
+            // int filled = 1;
+            int s = 0;
+            boolean leftEnd = false;
+            boolean rightEnd = false;
+            while (order.size() < n) {
+                // System.out.println(remainingPairs.toString());
+                if (!leftEnd) {
+                    int i = 0;
+                    boolean found = false;
+                    if (!symmetricRemainingPairs.isEmpty() && !found) {
+                        for (i = 0; i < occurrenceSortedList.size(); i++) {
+                            if (occurrenceSortedList.get(i).getKey().equals(leftItem)) {
+                                continue;
+                            }
+                            List<String> leftValue = occurrenceMapDefault.getOrDefault(leftItem, new LinkedList<>());
+                            // current test that has most pairs with other tests
+                            String tmp = occurrenceSortedList.get(i).getKey();
+                            Pair toBeRemoved = new Pair<>(tmp, leftItem);
+                            if (leftValue.contains(tmp) && symmetricRemainingPairs.contains(toBeRemoved) && remainingPairs.contains(toBeRemoved) && !order.contains(tmp)) {
+                                order.add(leftBorder, tmp);
+                                remainingPairs.remove(toBeRemoved);
+                                symmetricRemainingPairs.remove(toBeRemoved);
+                                Pair reverseToBeRemoved = new Pair<>(leftItem, tmp);
+                                symmetricRemainingPairs.remove(reverseToBeRemoved);
+                                leftItem = tmp;
+                                System.out.println("LEFTINDEX?: " + tmp);
+                                found = true;
+                                break;
+                            }
                         }
                     }
-                    if (i < occurrenceSortedList.size()) {
-                        occurrenceSortedList.remove(i);
-                    }
-                    Collections.sort(occurrenceSortedList, (o1, o2) -> (o2.getValue().size() - o1.getValue().size()));
-                }
-                if (!leftFound) {
-                    /* for (String finalSelectedTest : affectedTestClasses) {
-                        if (!order.contains(finalSelectedTest)) {
-                            order.set(left, finalSelectedTest);
-                            // System.out.println("LEFTINDEX???: " + left);
-                            leftItem = finalSelectedTest;
-                            break;
+                    if (!remainingPairs.isEmpty() && !found) {
+                        for (i = 0; i < occurrenceSortedList.size(); i++) {
+                            if (occurrenceSortedList.get(i).getKey().equals(leftItem)) {
+                                continue;
+                            }
+                            List<String> leftValue = occurrenceMapDefault.getOrDefault(leftItem, new LinkedList<>());
+                            // current test that has most pairs with other tests
+                            String tmp = occurrenceSortedList.get(i).getKey();
+                            Pair toBeRemoved = new Pair<>(tmp, leftItem);
+                            if (leftValue.contains(tmp) && remainingPairs.contains(toBeRemoved) && !order.contains(tmp)) {
+                                order.add(leftBorder, tmp);
+                                remainingPairs.remove(toBeRemoved);
+                                leftItem = tmp;
+                                System.out.println("LEFTINDEX??: " + tmp);
+                                found = true;
+                                break;
+                            }
                         }
-                    } */
-                }
-                // System.out.println("new left item: " + leftItem + "; " + (s++));
-                int j = 0;
-                boolean rightFound = false;
-                if (!symmetricRemainingPairs.isEmpty()) {
-                    for (j = 0; j < occurrenceSortedList.size(); j++) {
-                        if (occurrenceSortedList.get(j).getKey().equals(rightItem)) {
-                            continue;
-                        }
-                        List<String> rightValue = occurrenceMap.getOrDefault(rightItem, new LinkedList<>());
-                        // current test that has most pairs with other tests
-                        String tmp = occurrenceSortedList.get(j).getKey();
-                        Pair toBeRemoved = new Pair<>(rightItem, tmp);
-                        if (rightValue.contains(tmp) && symmetricRemainingPairs.contains(toBeRemoved)) {
-                            order.add(rightBorder, tmp);
-                            remainingPairs.remove(toBeRemoved);
-                            Pair reverseToBeRemoved = new Pair<>(tmp, rightItem);
-                            symmetricRemainingPairs.remove(reverseToBeRemoved);
-                            symmetricRemainingPairs.remove(toBeRemoved);
-                            rightItem = tmp;
-                            // System.out.println("RIGHTINDEX?: " + right);
-                            rightBorder ++;
-                            rightFound = true;
-                            break;
-                        }
+                        System.out.println("REACH remainingPairs");
                     }
-                    if (j < occurrenceSortedList.size()) {
-                        occurrenceSortedList.remove(j);
-                    }
-                    Collections.sort(occurrenceSortedList, (o1, o2) -> (o2.getValue().size() - o1.getValue().size()));
-                } else if (!remainingPairs.isEmpty()) {
-                    for (j = 0; j < occurrenceSortedList.size(); j++) {
-                        if (occurrenceSortedList.get(j).getKey().equals(rightItem)) {
-                            continue;
+                    if (found) {
+                        // filled ++;
+                        rightBorder ++;
+                        System.out.println("new left item: " + leftItem + "; " + (s++));
+                    } else {
+                        leftEnd = true;
+                        if (rightEnd) {
+                            int j = 0;
+                            if (occurrenceSortedList.size() > 0) {
+                                while (order.contains(occurrenceSortedList.get(j).getKey())) {
+                                    j++;
+                                    if (j == occurrenceSortedList.size()) {
+                                        break;
+                                    }
+                                }
+                                if (j != occurrenceSortedList.size()) {
+                                    leftEnd = false;
+                                    rightEnd = false;
+                                    leftItem = occurrenceSortedList.get(j).getKey();
+                                    rightItem = occurrenceSortedList.get(j).getKey();
+                                    System.out.println("NEWLEFTINDEX???: " + leftItem);
+                                    leftBorder = rightBorder;
+                                    rightBorder = rightBorder + 1;
+                                    order.add(leftBorder, leftItem);
+                                }
+                            }
+                            if (j == occurrenceSortedList.size() || occurrenceSortedList.size() == 0) {
+                                for (String finalSelectedTest : finalSelectedTests) {
+                                    if (!order.contains(finalSelectedTest)) {
+                                        leftEnd = false;
+                                        rightEnd = false;
+                                        System.out.println("LEFTINDEX???: " + finalSelectedTest);
+                                        leftItem = finalSelectedTest;
+                                        rightItem = finalSelectedTest;
+                                        leftBorder = rightBorder;
+                                        rightBorder = rightBorder + 1;
+                                        order.add(leftBorder, finalSelectedTest);
+                                        break;
+                                    }
+                                }
+                            }
+                            // continue;
                         }
-                        List<String> rightValue = occurrenceMap.getOrDefault(rightItem, new LinkedList<>());
-                        // current test that has most pairs with other tests
-                        String tmp = occurrenceSortedList.get(j).getKey();
-                        Pair toBeRemoved = new Pair<>(rightItem, tmp);
-                        if (rightValue.contains(tmp) && remainingPairs.contains(toBeRemoved)) {
-                            order.add(rightBorder, tmp);
-                            remainingPairs.remove(toBeRemoved);
-                            rightItem = tmp;
-                            // System.out.println("RIGHTINDEX??: " + right);
-                            rightBorder++;
-                            rightFound = true;
-                            break;
-                        }
+                        System.out.println("REACH NOT FOUND");
                     }
-                    if (j < occurrenceSortedList.size()) {
-                        occurrenceSortedList.remove(j);
+                    occurrenceMap = new HashedMap();
+                    // Set<Pair> tmpPairs = new HashSet<>(remainingPairs);
+                    for (Pair pairItem : remainingPairs) {
+                        List<String> valueList = occurrenceMap.getOrDefault(pairItem.getKey(), new LinkedList<>());
+                        valueList.add((String) pairItem.getValue());
+                        occurrenceMap.put((String) pairItem.getKey(), valueList);
+                        List<String> keyList = occurrenceMap.getOrDefault(pairItem.getValue(), new LinkedList<>());
+                        keyList.add((String) pairItem.getKey());
+                        occurrenceMap.put((String) pairItem.getValue(), keyList);
                     }
+                    occurrenceSortedList = new ArrayList<>(occurrenceMap.entrySet());
                     Collections.sort(occurrenceSortedList, (o1, o2) -> (o2.getValue().size() - o1.getValue().size()));
                 }
-                if (!rightFound) {
-                    /* for (String finalSelectedTest : affectedTestClasses) {
-                        if (!order.contains(finalSelectedTest)) {
-                            order.set(right, finalSelectedTest);
-                            // System.out.println("RIGHTINDEX???: " + right);
-                            rightItem = finalSelectedTest;
-                            right ++;
-                            break;
+                if (!rightEnd) {
+                    int i = 0;
+                    boolean found = false;
+                    if (!symmetricRemainingPairs.isEmpty() && !found) {
+                        for (i = 0; i < occurrenceSortedList.size(); i++) {
+                            if (occurrenceSortedList.get(i).getKey().equals(rightItem)) {
+                                continue;
+                            }
+                            List<String> rightValue = occurrenceMapDefault.getOrDefault(rightItem, new LinkedList<>());
+                            // current test that has most pairs with other tests
+                            String tmp = occurrenceSortedList.get(i).getKey();
+                            Pair toBeRemoved = new Pair<>(rightItem, tmp);
+                            if (rightValue.contains(tmp) && symmetricRemainingPairs.contains(toBeRemoved) && remainingPairs.contains(toBeRemoved) && !order.contains(tmp)) {
+                                order.add(rightBorder, tmp);
+                                remainingPairs.remove(toBeRemoved);
+                                Pair reverseToBeRemoved = new Pair<>(tmp, rightItem);
+                                symmetricRemainingPairs.remove(reverseToBeRemoved);
+                                symmetricRemainingPairs.remove(toBeRemoved);
+                                rightItem = tmp;
+                                System.out.println("RIGHTINDEX?: " + tmp);
+                                found = true;
+                                break;
+                            }
                         }
-                    }*/
+                    }
+                    if (!remainingPairs.isEmpty() && !found) {
+                        for (i = 0; i < occurrenceSortedList.size(); i++) {
+                            if (occurrenceSortedList.get(i).getKey().equals(rightItem)) {
+                                continue;
+                            }
+                            List<String> rightValue = occurrenceMapDefault.getOrDefault(rightItem, new LinkedList<>());
+                            // current test that has most pairs with other tests
+                            String tmp = occurrenceSortedList.get(i).getKey();
+                            Pair toBeRemoved = new Pair<>(rightItem, tmp);
+                            if (rightValue.contains(tmp) && remainingPairs.contains(toBeRemoved) && !order.contains(tmp)) {
+                                order.add(rightBorder, tmp);
+                                remainingPairs.remove(toBeRemoved);
+                                rightItem = tmp;
+                                System.out.println("RIGHTINDEX??: " + tmp);
+                                found = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (found) {
+                        // filled ++;
+                        rightBorder ++;
+                        System.out.println("new right item: " + rightItem + "; " + (s++));
+                    } else {
+                        rightEnd = true;
+                        if (leftEnd) {
+                            int j = 0;
+                            if (occurrenceSortedList.size() > 0) {
+                                while (order.contains(occurrenceSortedList.get(j).getKey())) {
+                                    j++;
+                                    if (j == occurrenceSortedList.size()) {
+                                        break;
+                                    }
+                                }
+                                if (j != occurrenceSortedList.size()) {
+                                    leftEnd = false;
+                                    rightEnd = false;
+                                    leftItem = occurrenceSortedList.get(j).getKey();
+                                    rightItem = occurrenceSortedList.get(j).getKey();
+                                    order.add(rightBorder, leftItem);
+                                    System.out.println("NEWRIGHTINDEX???: " + leftItem);
+                                    leftBorder = rightBorder;
+                                    rightBorder = rightBorder + 1;
+                                }
+                            }
+                            if (j == occurrenceSortedList.size() || occurrenceSortedList.size() == 0) {
+                                for (String finalSelectedTest : finalSelectedTests) {
+                                    if (!order.contains(finalSelectedTest)) {
+                                        order.add(rightBorder, finalSelectedTest);
+                                        System.out.println("RIGHTINDEX???: " + finalSelectedTest);
+                                        leftItem = finalSelectedTest;
+                                        rightItem = finalSelectedTest;
+                                        leftBorder = rightBorder;
+                                        rightBorder = rightBorder + 1;
+                                        leftEnd = false;
+                                        rightEnd = false;
+                                        break;
+                                    }
+                                }
+                            }
+                            // continue;
+                        }
+                    }
+                    occurrenceMap = new HashedMap();
+                    // Set<Pair> tmpPairs = new HashSet<>(remainingPairs);
+                    for (Pair pairItem : remainingPairs) {
+                        List<String> valueList = occurrenceMap.getOrDefault(pairItem.getKey(), new LinkedList<>());
+                        valueList.add((String) pairItem.getValue());
+                        occurrenceMap.put((String) pairItem.getKey(), valueList);
+                        List<String> keyList = occurrenceMap.getOrDefault(pairItem.getValue(), new LinkedList<>());
+                        keyList.add((String) pairItem.getKey());
+                        occurrenceMap.put((String) pairItem.getValue(), keyList);
+                    }
+                    occurrenceSortedList = new ArrayList<>(occurrenceMap.entrySet());
+                    Collections.sort(occurrenceSortedList, (o1, o2) -> (o2.getValue().size() - o1.getValue().size()));
                 }
-                // System.out.println("new right item: " + rightItem + "; " + (s++));
             }
             System.out.println(order.toString());
-            transformedOrders.add(order);
+            orders.add(order);
         }
 
-        System.out.println("FINAL NUM OF ORDERS: " + transformedOrders.size());
+        System.out.println("FINAL NUM OF ORDERS: " + orders.size());
+    }
+
+    private void storeClassesOrdersBasedOnSymmetricWhole() {
+        // store all the orders using the algorithm on the whole test suite
+        orders = new LinkedList<>();
+
+        List<List<String>> transformedOrders = new LinkedList<>();
+
+        int n = allTestClasses.size();
+
+        Map<String, List<String>> testClassesToTests = new HashMap<>();
+        for (String testItem : allTestMethods) {
+            String testItemClass = testItem.substring(0, testItem.lastIndexOf("."));
+            // System.out.println("testItemClass: " + testItemClass);
+            List<String> testItemValue = testClassesToTests.getOrDefault(testItemClass, new LinkedList<>());
+            testItemValue.add(testItem);
+            testClassesToTests.put(testItemClass, testItemValue);
+        }
+        // System.out.println("TOTAL TEST CLASS SIZE: " + testClassesToTests.keySet().size());
+
+        // Firstly deal with all non-symmetric pairs
+        Set<Pair> remainingPairs = new HashSet<>(classesPairSet);
+        Set<Pair> symmetricRemainingPairs = new HashSet<>(classesPairSet);
+
+        // build a occurrenceMap to see how many times each test occurs in the pairs
+        Map<String, List<String>> occurrenceMap = new HashedMap();
+        for (Pair pairItem : remainingPairs) {
+            List<String> valueList = occurrenceMap.getOrDefault(pairItem.getKey(), new LinkedList<>());
+            valueList.add((String) pairItem.getValue());
+            occurrenceMap.put((String) pairItem.getKey(), valueList);
+            List<String> keyList = occurrenceMap.getOrDefault(pairItem.getValue(), new LinkedList<>());
+            keyList.add((String) pairItem.getKey());
+            occurrenceMap.put((String) pairItem.getValue(), keyList);
+        }
+
+        // store the initial occurrenceMap
+        Map<String, List<String>> occurrenceMapDefault = new HashedMap(occurrenceMap);
+        List<Map.Entry<String, List<String>>> occurrenceSortedList = new ArrayList<>(occurrenceMap.entrySet());
+        // descending order
+        Collections.sort(occurrenceSortedList, (o1, o2) -> (o2.getValue().size() - o1.getValue().size()));
+
+        // deal with the other orders
+        while (!remainingPairs.isEmpty()) {
+            // System.out.println("REMAINING PAIRS SIZE: " + remainingPairs.size());
+            // System.out.println("SEMMETRIC REMAINING PAIRS SIZE: " + symmetricRemainingPairs.size());
+            // System.out.println("CURRENT ORDER SIZE: " + transformedOrders.size());
+
+            // recalculating the occurrenceMap every time
+            occurrenceMap = new HashedMap();
+            for (Pair pairItem : remainingPairs) {
+                List<String> valueList = occurrenceMap.getOrDefault(pairItem.getKey(), new LinkedList<>());
+                valueList.add((String) pairItem.getValue());
+                occurrenceMap.put((String) pairItem.getKey(), valueList);
+                List<String> keyList = occurrenceMap.getOrDefault(pairItem.getValue(), new LinkedList<>());
+                keyList.add((String) pairItem.getKey());
+                occurrenceMap.put((String) pairItem.getValue(), keyList);
+            }
+            occurrenceSortedList = new ArrayList<>(occurrenceMap.entrySet());
+            // descending order
+            Collections.sort(occurrenceSortedList, (o1, o2) -> (o2.getValue().size() - o1.getValue().size()));
+
+            List<String> transformedOrder = new LinkedList<>();
+            transformedOrder.add(0, occurrenceSortedList.get(0).getKey());
+            int leftBorder = 0;
+            int rightBorder = 1;
+            String leftItem = occurrenceSortedList.get(0).getKey();
+            String rightItem = occurrenceSortedList.get(0).getKey();
+
+            boolean leftEnd = false;
+            boolean rightEnd = false;
+            while (transformedOrder.size() < n) {
+                // extend to the left side
+                if (!leftEnd) {
+                    int i = 0;
+                    boolean found = false;
+                    // Firstly deal with all asymmetric ones
+                    if (!symmetricRemainingPairs.isEmpty() && !found) {
+                        for (i = 0; i < occurrenceSortedList.size(); i++) {
+                            // If this item is just the same as the item that we need to pair with, then go to next.
+                            if (occurrenceSortedList.get(i).getKey().equals(leftItem)) {
+                                continue;
+                            }
+                            // If this item that occurs most currently pairs with the leftItem we want to extend left from, then continue on this item.
+                            List<String> leftValue = occurrenceMapDefault.getOrDefault(leftItem, new LinkedList<>());
+                            // current test that has most pairs with other tests, extract this item.
+                            String tmp = occurrenceSortedList.get(i).getKey();
+                            Pair toBeRemoved = new Pair<>(tmp, leftItem);
+                            if (leftValue.contains(tmp) && symmetricRemainingPairs.contains(toBeRemoved) && remainingPairs.contains(toBeRemoved) && !transformedOrder.contains(tmp)) {
+                                transformedOrder.add(leftBorder, tmp);
+                                remainingPairs.remove(toBeRemoved);
+                                symmetricRemainingPairs.remove(toBeRemoved);
+                                Pair reverseToBeRemoved = new Pair<>(leftItem, tmp);
+                                symmetricRemainingPairs.remove(reverseToBeRemoved);
+                                // this item will be new left side.
+                                leftItem = tmp;
+                                // System.out.println("LEFTINDEX?: " + tmp);
+                                found = true;
+                                break;
+                            }
+                        }
+                    }
+                    // If not found when doing the asymmetric, doing the symmetric ones
+                    if (!remainingPairs.isEmpty() && !found) {
+                        for (i = 0; i < occurrenceSortedList.size(); i++) {
+                            if (occurrenceSortedList.get(i).getKey().equals(leftItem)) {
+                                continue;
+                            }
+                            List<String> leftValue = occurrenceMapDefault.getOrDefault(leftItem, new LinkedList<>());
+                            // current test that has most pairs with other tests
+                            String tmp = occurrenceSortedList.get(i).getKey();
+                            Pair toBeRemoved = new Pair<>(tmp, leftItem);
+                            if (leftValue.contains(tmp) && remainingPairs.contains(toBeRemoved) && !transformedOrder.contains(tmp)) {
+                                transformedOrder.add(leftBorder, tmp);
+                                remainingPairs.remove(toBeRemoved);
+                                leftItem = tmp;
+                                // System.out.println("LEFTINDEX??: " + tmp);
+                                found = true;
+                                break;
+                            }
+                        }
+                        // System.out.println("REACH remainingPairs");
+                    }
+                    if (found) {
+                        rightBorder ++;
+                        // System.out.println("new left item: " + leftItem + "; ");
+                    } else {
+                        leftEnd = true;
+                        if (rightEnd) {
+                            int j = 0;
+                            if (occurrenceSortedList.size() > 0) {
+                                // find the next item that occurs most
+                                while (transformedOrder.contains(occurrenceSortedList.get(j).getKey())) {
+                                    j++;
+                                    if (j == occurrenceSortedList.size()) {
+                                        break;
+                                    }
+                                }
+                                // found the next item that occurs most
+                                if (j != occurrenceSortedList.size()) {
+                                    leftEnd = false;
+                                    rightEnd = false;
+                                    leftItem = occurrenceSortedList.get(j).getKey();
+                                    rightItem = occurrenceSortedList.get(j).getKey();
+                                    // System.out.println("NEWLEFTINDEX???: " + leftItem);
+                                    leftBorder = rightBorder;
+                                    rightBorder = rightBorder + 1;
+                                    transformedOrder.add(leftBorder, leftItem);
+                                }
+                            }
+                            if (j == occurrenceSortedList.size() || occurrenceSortedList.size() == 0) {
+                                for (String finalSelectedTest : allTestClasses) {
+                                    if (!transformedOrder.contains(finalSelectedTest)) {
+                                        leftEnd = false;
+                                        rightEnd = false;
+                                        // System.out.println("LEFTINDEX???: " + finalSelectedTest);
+                                        leftItem = finalSelectedTest;
+                                        rightItem = finalSelectedTest;
+                                        leftBorder = rightBorder;
+                                        rightBorder = rightBorder + 1;
+                                        transformedOrder.add(leftBorder, finalSelectedTest);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        // System.out.println("REACH NOT FOUND");
+                    }
+                    occurrenceMap = new HashedMap();
+                    for (Pair pairItem : remainingPairs) {
+                        List<String> valueList = occurrenceMap.getOrDefault(pairItem.getKey(), new LinkedList<>());
+                        valueList.add((String) pairItem.getValue());
+                        occurrenceMap.put((String) pairItem.getKey(), valueList);
+                        List<String> keyList = occurrenceMap.getOrDefault(pairItem.getValue(), new LinkedList<>());
+                        keyList.add((String) pairItem.getKey());
+                        occurrenceMap.put((String) pairItem.getValue(), keyList);
+                    }
+                    occurrenceSortedList = new ArrayList<>(occurrenceMap.entrySet());
+                    Collections.sort(occurrenceSortedList, (o1, o2) -> (o2.getValue().size() - o1.getValue().size()));
+                }
+                if (!rightEnd) {
+                    int i = 0;
+                    boolean found = false;
+                    if (!symmetricRemainingPairs.isEmpty() && !found) {
+                        for (i = 0; i < occurrenceSortedList.size(); i++) {
+                            if (occurrenceSortedList.get(i).getKey().equals(rightItem)) {
+                                continue;
+                            }
+                            List<String> rightValue = occurrenceMapDefault.getOrDefault(rightItem, new LinkedList<>());
+                            // current test that has most pairs with other tests
+                            String tmp = occurrenceSortedList.get(i).getKey();
+                            Pair toBeRemoved = new Pair<>(rightItem, tmp);
+                            if (rightValue.contains(tmp) && symmetricRemainingPairs.contains(toBeRemoved) && remainingPairs.contains(toBeRemoved) && !transformedOrder.contains(tmp)) {
+                                transformedOrder.add(rightBorder, tmp);
+                                remainingPairs.remove(toBeRemoved);
+                                Pair reverseToBeRemoved = new Pair<>(tmp, rightItem);
+                                symmetricRemainingPairs.remove(reverseToBeRemoved);
+                                symmetricRemainingPairs.remove(toBeRemoved);
+                                rightItem = tmp;
+                                // System.out.println("RIGHTINDEX?: " + tmp);
+                                found = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!remainingPairs.isEmpty() && !found) {
+                        for (i = 0; i < occurrenceSortedList.size(); i++) {
+                            if (occurrenceSortedList.get(i).getKey().equals(rightItem)) {
+                                continue;
+                            }
+                            List<String> rightValue = occurrenceMapDefault.getOrDefault(rightItem, new LinkedList<>());
+                            // current test that has most pairs with other tests
+                            String tmp = occurrenceSortedList.get(i).getKey();
+                            Pair toBeRemoved = new Pair<>(rightItem, tmp);
+                            if (rightValue.contains(tmp) && remainingPairs.contains(toBeRemoved) && !transformedOrder.contains(tmp)) {
+                                transformedOrder.add(rightBorder, tmp);
+                                remainingPairs.remove(toBeRemoved);
+                                rightItem = tmp;
+                                // System.out.println("RIGHTINDEX??: " + tmp);
+                                found = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (found) {
+                        rightBorder ++;
+                        // System.out.println("new right item: " + rightItem + "; ");
+                    } else {
+                        rightEnd = true;
+                        if (leftEnd) {
+                            int j = 0;
+                            if (occurrenceSortedList.size() > 0) {
+                                while (transformedOrder.contains(occurrenceSortedList.get(j).getKey())) {
+                                    j++;
+                                    if (j == occurrenceSortedList.size()) {
+                                        break;
+                                    }
+                                }
+                                if (j != occurrenceSortedList.size()) {
+                                    leftEnd = false;
+                                    rightEnd = false;
+                                    leftItem = occurrenceSortedList.get(j).getKey();
+                                    rightItem = occurrenceSortedList.get(j).getKey();
+                                    transformedOrder.add(rightBorder, leftItem);
+                                    // System.out.println("NEWRIGHTINDEX???: " + leftItem);
+                                    leftBorder = rightBorder;
+                                    rightBorder = rightBorder + 1;
+                                }
+                            }
+                            if (j == occurrenceSortedList.size() || occurrenceSortedList.size() == 0) {
+                                for (String finalSelectedTest : allTestClasses) {
+                                    if (!transformedOrder.contains(finalSelectedTest)) {
+                                        leftEnd = false;
+                                        rightEnd = false;
+                                        transformedOrder.add(rightBorder, finalSelectedTest);
+                                        // System.out.println("RIGHTINDEX???: " + finalSelectedTest);
+                                        leftItem = finalSelectedTest;
+                                        rightItem = finalSelectedTest;
+                                        leftBorder = rightBorder;
+                                        rightBorder = rightBorder + 1;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    occurrenceMap = new HashedMap();
+                    // Set<Pair> tmpPairs = new HashSet<>(remainingPairs);
+                    for (Pair pairItem : remainingPairs) {
+                        List<String> valueList = occurrenceMap.getOrDefault(pairItem.getKey(), new LinkedList<>());
+                        valueList.add((String) pairItem.getValue());
+                        occurrenceMap.put((String) pairItem.getKey(), valueList);
+                        List<String> keyList = occurrenceMap.getOrDefault(pairItem.getValue(), new LinkedList<>());
+                        keyList.add((String) pairItem.getKey());
+                        occurrenceMap.put((String) pairItem.getValue(), keyList);
+                    }
+                    occurrenceSortedList = new ArrayList<>(occurrenceMap.entrySet());
+                    Collections.sort(occurrenceSortedList, (o1, o2) -> (o2.getValue().size() - o1.getValue().size()));
+                }
+            }
+            // System.out.println(transformedOrder.toString());
+            transformedOrders.add(transformedOrder);
+        }
+
+        for (List<String> orderItem : transformedOrders) {
+            List<String> order = new LinkedList<>();
+            for (String classItem : orderItem) {
+                order.addAll(testClassesToTests.get(classItem));
+            }
+            orders.add(order);
+        }
+        System.out.println("FINAL NUM OF ORDERS: " + orders.size());
     }
 
     private void storeOrdersByClasses() {
@@ -1051,6 +1416,7 @@ public class IncDetectorMojo extends DetectorMojo {
             }
         } catch (IOException e) {
             e.printStackTrace();
+            System.out.println("REACH HEERE");
         }
         return selectedTests;
     }
@@ -1444,6 +1810,20 @@ public class IncDetectorMojo extends DetectorMojo {
                     writer.write(getJarToChecksumMapping(path).toString());
                     writer.write(System.lineSeparator());
                 }
+            }
+        } catch (IOException ioe) {
+            ioe.printStackTrace();
+        }
+    }
+
+    private void writeNumOfOrders(List<List<String>> orders, String artifactsDir) {
+        String outFilename = Paths.get(artifactsDir, "num-of-orders").toString();
+        try (BufferedWriter writer = Writer.getWriter(outFilename)) {
+            if (orders != null) {
+                int size = orders.size();
+                String s = Integer.toString(size);
+                writer.write(s);
+                writer.write(System.lineSeparator());
             }
         } catch (IOException ioe) {
             ioe.printStackTrace();
