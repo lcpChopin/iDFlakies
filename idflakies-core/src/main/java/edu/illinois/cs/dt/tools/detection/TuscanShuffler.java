@@ -15,6 +15,9 @@ public class TuscanShuffler {
     }
 
     public List<String> nextOrder() {
+        if (index == tuscanOrders.size()) {
+            return new LinkedList<>();
+        }
         List<String> order = tuscanOrders.get(index);
         // System.out.println("INDEX: " + index + "; ORDER: " + order.toString());
         index ++;
