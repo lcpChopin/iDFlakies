@@ -169,7 +169,11 @@ public class IncDetectorMojo extends DetectorMojo {
             final Detector detector;
             if (DetectorFactory.detectorType().equals("tuscan")){
                 System.out.println("TUSCAN LA!!!");
-                detector = DetectorFactory.makeDetector(this.runner, mavenProject.getBasedir(), tests, rounds, orders);
+                int newRounds = rounds;
+                if (rounds > orders.size()) {
+                    newRounds = orders.size();
+                }
+                detector = DetectorFactory.makeDetector(this.runner, mavenProject.getBasedir(), tests, newRounds, orders);
             } else {
                 detector = DetectorFactory.makeDetector(this.runner, mavenProject.getBasedir(), tests, rounds);
             }
