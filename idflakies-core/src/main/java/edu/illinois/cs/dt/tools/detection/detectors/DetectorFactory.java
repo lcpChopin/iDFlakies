@@ -7,6 +7,16 @@ import java.io.File;
 import java.util.List;
 
 public class DetectorFactory {
+    private static int failTimes = 0;
+
+    public static void addFailTimes() {
+        failTimes += 1;
+    }
+
+    public static int getFailTimes() {
+        return failTimes;
+    }
+
     public static String detectorType() {
         return Configuration.config().getProperty("detector.detector_type", "random");
     }

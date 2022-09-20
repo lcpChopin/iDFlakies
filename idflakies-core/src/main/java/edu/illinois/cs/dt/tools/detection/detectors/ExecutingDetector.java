@@ -28,6 +28,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import static edu.illinois.cs.dt.tools.detection.detectors.DetectorFactory.addFailTimes;
+
 public abstract class ExecutingDetector implements Detector, VerbosePrinter {
     protected Runner runner;
     protected File baseDir;
@@ -92,7 +94,7 @@ public abstract class ExecutingDetector implements Detector, VerbosePrinter {
 
         final DependentTestList dtList = new DependentTestList(detect());
         System.out.println(); // End the progress line.
-
+        
         print(String.format("[INFO] Found %d tests, writing list to %s and dt lists to %s\n", dtList.size(), listPath, dtListPath));
 
         Files.write(dtListPath, dtList.toString().getBytes());
@@ -188,7 +190,10 @@ public abstract class ExecutingDetector implements Detector, VerbosePrinter {
     private static String buildResultString(
             int testCnt, int currentRound, int totalRound,
             double elapsedTimeSec, double totalTimeSec, double estimateTimeSec) {
-        return String.format("\r[INFO] Found %d tests in round %d of %d (%.1f seconds elapsed (%.1f total), %.1f seconds remaining).",
+        if (testCnt > 0) {
+            addFailTimes();
+        }
+	return String.format("\r[INFO] Found %d tests in round %d of %d (%.1f seconds elapsed (%.1f total), %.1f seconds remaining).",
                              testCnt, currentRound, totalRound,
                              elapsedTimeSec, totalTimeSec, estimateTimeSec);
     }

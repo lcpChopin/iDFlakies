@@ -130,32 +130,33 @@ public class IncDetectorMojo extends DetectorMojo {
         long startTime = System.currentTimeMillis();
         try {
             affectedTestClasses = computeAffectedTests(mavenProject);
-            if (!detectOrNot) {
+	    if (!detectOrNot) {
                 System.out.println("Not detect flaky tests at the first run");
                 return;
             }
         } catch (IOException | MojoExecutionException | ClassNotFoundException e) {
             e.printStackTrace();
+	    System.out.println("???");
         }
         timing(startTime);
 
         try {
             finalSelectedTests = getTests(mavenProject, this.runner.framework());
-            // storeOrdersByZ3();
+	    // storeOrdersByZ3();
             // storeClassOrdersByZ3();
             // storeOrders();
             // storeOrdersByClasses();
             // storeOrdersBasedOnSymmetric();
             // storeClassesOrdersBasedOnSymmetric();
             storeClassesOrdersBasedOnSymmetricWhole();
-            writeNumOfOrders(orders, artifactsDir);
         } catch (IOException e) {
             e.printStackTrace();
         }
 
         startTime = System.currentTimeMillis();
         logger.runAndLogError(() -> detectorExecute(logger, mavenProject, moduleRounds(coordinates)));
-        timing(startTime);
+        writeNumOfOrders(orders, artifactsDir);
+	timing(startTime);
     }
 
     // specilized for Tuscan
@@ -196,7 +197,7 @@ public class IncDetectorMojo extends DetectorMojo {
         Set<String> allTests = new HashSet<>(allTestClasses);
 
 
-        selectedTests = getSelectedTests();
+        selectedTests = allTests; // getSelectedTests();
         // check if the classpath or jar checksum are changed; if they are changed, STARTs/ekstazi should select all tests
         checkSelectAll();
 
@@ -206,7 +207,7 @@ public class IncDetectorMojo extends DetectorMojo {
         }
 
         if (selectAll) {
-            return allTests;
+            affectedTests = allTests;
         }
 
         getTransitiveClosure();
@@ -217,7 +218,7 @@ public class IncDetectorMojo extends DetectorMojo {
         Set<String> processedClasses = new HashSet<>();
 
         allTestMethods = super.getTests(mavenProject, this.runner.framework());
-        pairSet = new HashSet<>();
+	pairSet = new HashSet<>();
         classesPairSet = new HashSet<>();
 
 
@@ -289,8 +290,8 @@ public class IncDetectorMojo extends DetectorMojo {
         }
 
         affectedTests.addAll(additionalTests);
-        System.out.println("WHOLE NUMBER OF PAIRS: " + allTestMethods.size() * (allTestMethods.size() - 1));
-        System.out.println("SELECTED NUMBER OF PAIRS: " + pairSet.size());
+        System.out.println("WHOLE NUMBER OF PAIRS: " + allTestClasses.size() * (allTestClasses.size() - 1));
+        System.out.println("SELECTED NUMBER OF PAIRS: " + classesPairSet.size());
         return affectedTests;
     }
 
@@ -595,7 +596,6 @@ public class IncDetectorMojo extends DetectorMojo {
                                 break;
                             }
                         }
-                        System.out.println("REACH remainingPairs");
                     }
                     if (found) {
                         // filled ++;
@@ -640,7 +640,6 @@ public class IncDetectorMojo extends DetectorMojo {
                             }
                             // continue;
                         }
-                        System.out.println("REACH NOT FOUND");
                     }
                     occurrenceMap = new HashedMap();
                     // Set<Pair> tmpPairs = new HashSet<>(remainingPairs);
@@ -864,7 +863,6 @@ public class IncDetectorMojo extends DetectorMojo {
                                 break;
                             }
                         }
-                        System.out.println("REACH remainingPairs");
                     }
                     if (found) {
                         // filled ++;
@@ -909,7 +907,6 @@ public class IncDetectorMojo extends DetectorMojo {
                             }
                             // continue;
                         }
-                        System.out.println("REACH NOT FOUND");
                     }
                     occurrenceMap = new HashedMap();
                     // Set<Pair> tmpPairs = new HashSet<>(remainingPairs);
@@ -1041,6 +1038,7 @@ public class IncDetectorMojo extends DetectorMojo {
 
         int n = allTestClasses.size();
 
+	System.out.println("ALLTESTSCLASSES: " + n);
         Map<String, List<String>> testClassesToTests = new HashMap<>();
         for (String testItem : allTestMethods) {
             String testItemClass = testItem.substring(0, testItem.lastIndexOf("."));
@@ -1420,7 +1418,6 @@ public class IncDetectorMojo extends DetectorMojo {
             }
         } catch (IOException e) {
             e.printStackTrace();
-            System.out.println("REACH HEERE");
         }
         return selectedTests;
     }
@@ -1825,9 +1822,11 @@ public class IncDetectorMojo extends DetectorMojo {
         try (BufferedWriter writer = Writer.getWriter(outFilename)) {
             if (orders != null) {
                 int size = orders.size();
-                String s = Integer.toString(size);
+                String s = Integer.toString(size) + ",";
                 writer.write(s);
-                writer.write(System.lineSeparator());
+		String another = Integer.toString(DetectorFactory.getFailTimes());
+                writer.write(another);
+		writer.write(System.lineSeparator());
             }
         } catch (IOException ioe) {
             ioe.printStackTrace();
