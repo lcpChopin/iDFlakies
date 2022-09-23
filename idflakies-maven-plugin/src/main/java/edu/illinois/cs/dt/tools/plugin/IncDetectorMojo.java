@@ -1315,7 +1315,8 @@ public class IncDetectorMojo extends DetectorMojo {
         for (List<String> orderItem : transformedOrders) {
             List<String> order = new LinkedList<>();
             for (String classItem : orderItem) {
-                order.addAll(testClassesToTests.get(classItem));
+		System.out.println("CHECKWH: " + classItem);
+                order.addAll(testClassesToTests.getOrDefault(classItem, new LinkedList<>()));
             }
             orders.add(order);
         }
