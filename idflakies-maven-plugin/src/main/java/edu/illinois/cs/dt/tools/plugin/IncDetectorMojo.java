@@ -9,14 +9,11 @@ import edu.illinois.cs.dt.tools.utility.Logger;
 import edu.illinois.cs.dt.tools.utility.PathManager;
 import edu.illinois.cs.testrunner.configuration.Configuration;
 import edu.illinois.cs.testrunner.data.framework.TestFramework;
-import edu.illinois.starts.asm.ClassReader;
 import edu.illinois.starts.helpers.Writer;
 import edu.illinois.starts.util.Pair;
 
 import org.apache.commons.codec.binary.Hex;
-import org.apache.commons.collections.map.HashedMap;
 import org.apache.maven.artifact.DependencyResolutionRequiredException;
-import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugins.annotations.LifecyclePhase;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.ResolutionScope;
@@ -32,20 +29,12 @@ import java.io.InputStream;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
-import java.net.URL;
-import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.*;
 
-import com.microsoft.z3.*;
-
-// import org.sosy_lab.java_smt.SolverContextFactory;
-// import org.sosy_lab.java_smt.api.SolverContext;
-
-import static edu.illinois.starts.helpers.ZLCHelper.STAR_FILE;
 
 @Mojo(name = "incdetect", defaultPhase = LifecyclePhase.TEST, requiresDependencyResolution = ResolutionScope.TEST)
 public class IncDetectorMojo extends DetectorMojo {
@@ -118,6 +107,8 @@ public class IncDetectorMojo extends DetectorMojo {
 
     protected Map<String, Set<String>> testsToFields;
 
+    protected Map<String, List<String>> testClassesToTests;
+
     @Override
     public void execute() {
         superExecute();
@@ -138,8 +129,10 @@ public class IncDetectorMojo extends DetectorMojo {
 
         try {
             allTestClasses = getTestClasses(mavenProject, this.runner.framework());
-            finalSelectedTests = getTests(mavenProject, this.runner.framework());
+            allTestMethods = getTests(mavenProject, this.runner.framework());
+            getTestClassesToTests();
             storeOrdersByAsm();
+            storeOrders();
             writeNumOfOrders(orders, artifactsDir);
         } catch (IOException e) {
             e.printStackTrace();
@@ -184,21 +177,16 @@ public class IncDetectorMojo extends DetectorMojo {
         Path path = relativePath(PathManager.modulePath(), Paths.get(pairsFile));
         try {
             Set<String> fieldsList = new HashSet<>();
-            Set<String> leftFieldsList = new HashSet<>();
+            Set<String> nonImmutableFields = new HashSet<>();
             BufferedReader in = Files.newBufferedReader(path, StandardCharsets.UTF_8);
             String str;
             while ((str = in.readLine()) != null) {
                 // System.out.println(str);
                 String test = str.substring(0, str.indexOf(','));
                 String field = str.substring(str.indexOf(',') + 1);
-                Set<String> fieldsSet = new HashSet<>();
-                if (testsToFields.keySet().contains(test)) {
-                    fieldsSet = testsToFields.get(test);
-                }
-                String className = field.substring(0, field.lastIndexOf('.'));
-                String fieldName = field.substring(field.lastIndexOf('.') + 1);
-                if(fieldsList.contains(field)) {
-                    if (leftFieldsList.contains(field)) {
+                Set<String> fieldsSet = testsToFields.getOrDefault(test, new HashSet<>());
+                if (fieldsList.contains(field)) {
+                    if (nonImmutableFields.contains(field)) {
                         fieldsSet.add(field);
                         testsToFields.put(test, fieldsSet);
                     }
@@ -206,13 +194,15 @@ public class IncDetectorMojo extends DetectorMojo {
                 else {
                     fieldsList.add(field);
                     try {
+                        String className = field.substring(0, field.lastIndexOf('.'));
+                        String fieldName = field.substring(field.lastIndexOf('.') + 1);
                         Class clazz = loader.loadClass(className);
                         Field field1 = clazz.getDeclaredField(fieldName);
                         if (!isImmutable(field1)) {
                             // System.out.println("TEST: " + test + "; " + field);
                             fieldsSet.add(field);
+                            nonImmutableFields.add(field);
                             testsToFields.put(test, fieldsSet);
-                            leftFieldsList.add(field);
                         }
                     } catch (ClassNotFoundException e) {
                         e.printStackTrace();
@@ -232,7 +222,7 @@ public class IncDetectorMojo extends DetectorMojo {
                 testsList.add(testItem);
             }
             for (int i = 0; i < testsSet.size() - 1; i++) {
-                for (int j = 0; j < testsSet.size() - 1; j++) {
+                for (int j = i + 1; j < testsSet.size(); j++) {
                     String clzName0 = testsList.get(i).substring(0, testsList.get(i).lastIndexOf('.'));
                     String clzName1 = testsList.get(j).substring(0, testsList.get(j).lastIndexOf('.'));
                     if (!clzName0.equals(clzName1)) {
@@ -247,40 +237,284 @@ public class IncDetectorMojo extends DetectorMojo {
         }
     }
 
+    protected void getTestClassesToTests() {
+        testClassesToTests = new HashMap<>();
+        // System.out.println("ALLTESTSMETHODS: " + allTestMethods.size());
+        for (String testItem : allTestMethods) {
+            String testItemClass = testItem.substring(0, testItem.lastIndexOf("."));
+            List<String> testItemValue = new LinkedList<>();
+            if (testClassesToTests.containsKey(testItemClass)) {
+                testItemValue = testClassesToTests.get(testItemClass);
+            }
+            testItemValue.add(testItem);
+            testClassesToTests.put(testItemClass, testItemValue);
+        }
+    }
+
+    private class TestClassEndPoints {
+        String testClass;
+        String firstTestMethod;
+        String lastTestMethod;
+
+        TestClassEndPoints(String testClass, String firstTestMethod, String lastTestMethod) {
+            this.testClass = testClass;
+            this.firstTestMethod = firstTestMethod;
+            this.lastTestMethod = lastTestMethod;
+        }
+
+        public void setFirstTestMethod(String firstTestMethod) {
+            this.firstTestMethod = firstTestMethod;
+        }
+
+        public void setLastTestMethod(String lastTestMethod) {
+            this.lastTestMethod = lastTestMethod;
+        }
+    }
+
+    private List<String> getBestTestMethodOrder(List<String> tests, Set<Pair<String, String>> pairs, TestClassEndPoints endpoints) {
+        // the whole intra class order for this test class
+        List<String> testMethodOrder = new ArrayList<>();
+
+        // the first part intra class order (from left to right)
+        List<String> firstTestMethodOrder = new ArrayList<>();
+
+        // the second part intra class order (from right to left)
+        List<String> secondTestMethodOrder = new ArrayList<>();
+
+        // obtain the info from endpoints for this test class
+        String testClass = endpoints.testClass;
+        String firstTestMethod = endpoints.firstTestMethod;
+        String lastTestMethod = endpoints.lastTestMethod;
+
+        // obtain the test size
+        int testsSize = tests.size();
+
+        // store the already selected tests when constructing the next longest sequence
+        Set<String> alreadySelectedTests = new HashSet<>();
+
+        // store the remaining pairs for this test class
+        Set<Pair<String, String>> newPairs = new HashSet<>(pairs);
+
+        List<String> bestTestSequence = new LinkedList<>();
+
+        // System.out.println(endpoints.firstTestMethod + ", " + endpoints.lastTestMethod);
+        // System.out.println("TESTS SIZE: " + testsSize);
+        // System.out.println("REMAINING PAIRS: " + pairs.size());
+
+        while (alreadySelectedTests.size() < testsSize) {
+            // System.out.println("START: " + firstTestMethod + ", " + lastTestMethod);
+            if (!firstTestMethod.equals("")) {
+                // Trying to link from first method as long as possible
+                alreadySelectedTests.add(firstTestMethod);
+                bestTestSequence = findBestNextTestSequence(firstTestMethod, newPairs, endpoints.lastTestMethod, alreadySelectedTests, false);
+
+                // get the best sequence from the left, put this partial order at the stored order (from left to right)
+                firstTestMethodOrder.addAll(bestTestSequence);
+
+                // need to find the next left sequence from scratch, will random select one
+                firstTestMethod = "";
+            } else if (!lastTestMethod.equals("")) {
+                // Trying to link from last method as long as possible
+                alreadySelectedTests.add(lastTestMethod);
+                bestTestSequence = findBestNextTestSequence(lastTestMethod, newPairs, endpoints.firstTestMethod, alreadySelectedTests, true);
+
+                // get the best sequence from the left, put this partial order at the stored order (from left to right)
+                secondTestMethodOrder.addAll(0, bestTestSequence);
+
+                // need to find the next right sequence from scratch, will random select one
+                lastTestMethod = "";
+            } else {
+                // need to find the next left sequence from scratch, will random select one
+                // However, the problem is that the sequence constructed from left may only contain one test
+                // the same as the sequence constructed from right
+                for (String test : tests) {
+                    if (!alreadySelectedTests.contains(test) && !test.equals(firstTestMethod) && !test.equals(lastTestMethod)) {
+                        Set<String> newAlreadySelectedTests = new HashSet<>(alreadySelectedTests);
+                        newAlreadySelectedTests.add(test);
+                        bestTestSequence = findBestNextTestSequence(test, newPairs, endpoints.lastTestMethod, newAlreadySelectedTests, false);
+                        break;
+                    }
+                }
+                // If the sequence constructed from left is longer than one, just maintain it.
+                if (bestTestSequence.size() > 1) {
+                    firstTestMethodOrder.addAll(bestTestSequence);
+                    firstTestMethod = "";
+                } else if (bestTestSequence.size() == 1) {
+                    for (String test : tests) {
+                        if (!alreadySelectedTests.contains(test) && !test.equals(firstTestMethod) && !test.equals(lastTestMethod)) {
+                            Set<String> newAlreadySelectedTests = new HashSet<>(alreadySelectedTests);
+                            newAlreadySelectedTests.add(test);
+                            List<String> tmpBestTestSequence = findBestNextTestSequence(test, newPairs, endpoints.firstTestMethod, alreadySelectedTests, true);
+                            if (tmpBestTestSequence.size() >= 1) {
+                                bestTestSequence = tmpBestTestSequence;
+                                secondTestMethodOrder.addAll(0, bestTestSequence);
+                                lastTestMethod = "";
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            // System.out.println(testClass + ": " + bestTestSequence);
+            // Filter out the pairs that have already been covered now
+            if (bestTestSequence.size() > 0) {
+                String firstTest = bestTestSequence.get(0);
+                for (int i = 1; i < bestTestSequence.size(); i++) {
+                    Pair<String, String> p = new Pair<>(firstTest, bestTestSequence.get(i));
+                    newPairs.remove(p);
+                    firstTest = bestTestSequence.get(i);
+                }
+            }
+            alreadySelectedTests.addAll(bestTestSequence);
+        }
+        testMethodOrder.addAll(firstTestMethodOrder);
+        testMethodOrder.addAll(secondTestMethodOrder);
+        // System.out.println("EQUAL: " + (testMethodOrder.size() == testsSize));
+        // System.out.println("METHOD SIZE: " + testMethodOrder.size() + "," + testsSize);
+        return testMethodOrder;
+    }
+
+    private List<String> findBestNextTestSequence(String test, Set<Pair<String, String>> pairs, String lastTest, Set<String> alreadySelectedTests, boolean reverse) {
+        List<String> bestSequence = new LinkedList<>();
+        Set<Pair> newPairs = new HashSet<>(pairs);
+        if (reverse) {
+            bestSequence.add(0, test);
+        } else {
+            bestSequence.add(test);
+        }
+        String linkingTest = test;
+        while(true) {
+            String candidateTest = null;
+            for (Pair<String, String> pair : newPairs) {
+                // Consider next link based on what pairs need to be covered
+                // Next link depends on which direction we are going, forward or backward (reverse)
+                if (reverse) {
+                    // from right to left
+                    if (pair.getValue().equals(linkingTest)) {
+                        candidateTest = pair.getKey();
+                    }
+                } else {
+                    // from left to right
+                    if (pair.getKey().equals(linkingTest)) {
+                        candidateTest = pair.getValue();
+                    }
+                }
+                // Do not link further if already seen this test before or it is the last test based on the endpoint
+                if (candidateTest == null) {
+                    continue;
+                }
+
+                if (alreadySelectedTests.contains(candidateTest) || candidateTest.equals(lastTest)) {
+                    candidateTest = null;
+                    continue;
+                }
+
+                if (candidateTest != null) {
+                    break;
+                }
+            }
+            if (candidateTest == null) {
+                break;
+            } else {
+                if (reverse) {
+                    bestSequence.add(0, candidateTest);
+                    newPairs.remove(new Pair(candidateTest, linkingTest));
+                } else {
+                    bestSequence.add(candidateTest);
+                    newPairs.remove(new Pair(linkingTest, candidateTest));
+                }
+                linkingTest = candidateTest;
+                alreadySelectedTests.add(candidateTest);
+            }
+        }
+
+        return bestSequence;
+    }
+    /* private List<String> findBestNextTestSequence(String test, Set<Pair<String, String>> pairs, String lastTest, Set<String> alreadySelectedTests, boolean reverse) {
+        List<String> bestSequence = new LinkedList<>();
+        // bestSequence.add(test)
+        for (Pair<String, String> pair : pairs) {
+            // Consider next link based on what pairs need to be covered
+            // Next link depends on which direction we are going, forward or backward (reverse)
+            String candidateTest = null;
+            if (reverse) {
+                // from right to left
+                if (pair.getValue().equals(test)) {
+                    candidateTest = pair.getKey();
+                }
+            } else {
+                // from left to right
+                if (pair.getKey().equals(test)) {
+                    candidateTest = pair.getValue();
+                }
+            }
+            if (candidateTest == null) {
+                continue;
+            }
+            // Do not link further if already seen this test before or it is the last test based on the endpoint
+            if (alreadySelectedTests.contains(candidateTest) || candidateTest.equals(lastTest)) {
+                continue;
+            }
+            Set<Pair<String, String>> newPairs = new HashSet<>(pairs);
+            newPairs.remove(pair);
+            Set<String> newAlreadySelectedTests = new HashSet<>(alreadySelectedTests);
+            newAlreadySelectedTests.add(candidateTest);
+            // Try one step further to search for the best sequence assuming linking forward with this candidate test
+            List<String> potentialNextBestSequence = findBestNextTestSequence(candidateTest, newPairs, lastTest, newAlreadySelectedTests, reverse);
+            if (potentialNextBestSequence.size() > bestSequence.size()) {
+                bestSequence = potentialNextBestSequence;
+                System.out.println("TMP: " + test + ":" + bestSequence);
+            }
+        }
+        // Return the best sequence that involves the longest sequence going further, but now including the test at the beginning (or end for reverse)
+        if (reverse) {
+            bestSequence.add(test);
+        } else {
+            bestSequence.add(0, test);
+        }
+        return bestSequence;
+    } */
+
     private void storeOrdersByAsm() {
         orders = new LinkedList<>();
 
         int clazzSize = allTestClasses.size();
-        int testsSize = finalSelectedTests.size();
         Set<Pair> remainingPairs = new HashSet<>(pairSet);
 
-        Map<String, List<String>> occurrenceMap = new HashedMap();
+        Map<String, Set<String>> occurrenceMap = new HashMap<>();
         for (Pair pairItem : remainingPairs) {
-            List<String> valueList = occurrenceMap.getOrDefault(pairItem.getKey(), new LinkedList<>());
+            Set<String> valueList = occurrenceMap.getOrDefault(pairItem.getKey(), new HashSet<>());
             valueList.add((String) pairItem.getValue());
-            occurrenceMap.put((String) pairItem.getKey(), valueList);
-            List<String> keyList = occurrenceMap.getOrDefault(pairItem.getValue(), new LinkedList<>());
+            Set<String> keyList = occurrenceMap.getOrDefault(pairItem.getValue(), new HashSet<>());
             keyList.add((String) pairItem.getKey());
-            occurrenceMap.put((String) pairItem.getValue(), keyList);
         }
-        List<Map.Entry<String, List<String>>> occurrenceSortedList = new ArrayList<>(occurrenceMap.entrySet());
+        List<Map.Entry<String, Set<String>>> occurrenceSortedList = new ArrayList<>(occurrenceMap.entrySet());
         // descending order
         Collections.sort(occurrenceSortedList, (o1, o2) -> (o2.getValue().size() - o1.getValue().size()));
 
         Set<Pair> remainingCrossClassPairs = new HashSet<>(crossClassPairSet);
-        while (!remainingCrossClassPairs.isEmpty()) {
-            List<String> order = new LinkedList<>();
+        // System.out.println("CLAZZSIZE: " + clazzSize);
+        while (!remainingCrossClassPairs.isEmpty() || !remainingPairs.isEmpty()) {
+            List<String> tmpClassOrder = new LinkedList<>();
+            Map<String, TestClassEndPoints> testClassEndPointsMap = new HashMap<>();
             List<String> sequence = new LinkedList<>();
             String lastLeftAddedTest = "";
             String lastRightAddedTest = "";
             Set<String> processedClasses = new HashSet<>();
             int leftIndex = 0;
             int rightIndex = 0;
-            System.out.println("CrossPairsSize: " + remainingCrossClassPairs.size());
-            System.out.println("CLAZZSIZE: " + clazzSize);
-            while(order.size() != clazzSize) {
-                Pair pair1 = getPairs(sequence, lastLeftAddedTest, remainingCrossClassPairs, processedClasses, true);
+            boolean leftEnd = false;
+            boolean rightEnd = false;
+            // System.out.println("CrossPairsSize: " + remainingCrossClassPairs.size());
+            // System.out.println("IntraPairsSize: " + remainingPairs.size());
+            while (processedClasses.size() < clazzSize) {
+                Pair pair1 = new Pair("", "");
+                if (!leftEnd) {
+                    pair1 = getPairs(sequence, tmpClassOrder, lastLeftAddedTest, remainingCrossClassPairs, processedClasses, true);
+                }
                 if (!pair1.toString().equals("=")) {
+                    // System.out.println("lastLeftAddedTest: " + lastLeftAddedTest);
+                    // System.out.println("PAIR1: " + pair1.toString());
                     remainingCrossClassPairs.remove(pair1);
                     if (sequence.contains(lastLeftAddedTest)) {
                         leftIndex = sequence.indexOf(lastLeftAddedTest);
@@ -290,55 +524,254 @@ public class IncDetectorMojo extends DetectorMojo {
                     }
                     lastLeftAddedTest = pair1.getKey().toString();
                     String test2 = pair1.getValue().toString();
-                    sequence.add(leftIndex, test2);
-                    sequence.add(leftIndex, lastLeftAddedTest);
-                    if (rightIndex < sequence.indexOf(test2)) {
-                        lastRightAddedTest = test2;
-                        rightIndex = sequence.indexOf(test2);
-                    }
+                    // System.out.println("LEFT INDEX: " + leftIndex);
                     String c1 = lastLeftAddedTest.substring(0, lastLeftAddedTest.lastIndexOf('.'));
-                    String c2 = test2.substring(0, test2.lastIndexOf('.'));
+                    if (!test2.equals("LAST")) {
+                        String c2 = test2.substring(0, test2.lastIndexOf('.'));
+                        sequence.add(leftIndex, test2);
+                        processedClasses.add(c2);
+                        if (testClassEndPointsMap.containsKey(c2)) {
+                            TestClassEndPoints testClassEndPoints = testClassEndPointsMap.get(c2);
+                            testClassEndPoints.setFirstTestMethod(test2);
+                        } else {
+                            testClassEndPointsMap.put(c2, new TestClassEndPoints(c2, test2, ""));
+                        }
+                    }
+                    sequence.add(leftIndex, lastLeftAddedTest);
                     processedClasses.add(c1);
-                    processedClasses.add(c2);
-                    System.out.println("PAIR1: " + pair1.toString());
+                    if (testClassEndPointsMap.containsKey(c1)) {
+                        TestClassEndPoints testClassEndPoints = testClassEndPointsMap.get(c1);
+                        testClassEndPoints.setLastTestMethod(lastLeftAddedTest);
+                    } else {
+                        testClassEndPointsMap.put(c1, new TestClassEndPoints(c1, "", lastLeftAddedTest));
+                    }
+                    if (!test2.equals("LAST")) {
+                        if (rightIndex < sequence.indexOf(test2)) {
+                            lastRightAddedTest = test2;
+                            rightIndex = sequence.indexOf(test2);
+                        }
+                    }
+                    // System.out.println("PAIR1: " + pair1.toString());
+                    // System.out.println("PROCLAZZSIZE: " + processedClasses.size());
+                } else {
+                    leftEnd = true;
                 }
-                Pair pair2 = getPairs(sequence, lastRightAddedTest, remainingCrossClassPairs, processedClasses, false);
+                Pair pair2 = new Pair("", "");
+                if (!rightEnd) {
+                    pair2 = getPairs(sequence, tmpClassOrder, lastRightAddedTest, remainingCrossClassPairs, processedClasses, false);
+                }
                 if (!pair2.toString().equals("=")) {
+                    // System.out.println("lastRightAddedTest: " + lastRightAddedTest);
+                    // System.out.println("PAIR2: " + pair2.toString());
                     remainingCrossClassPairs.remove(pair2);
                     if (sequence.contains(lastRightAddedTest)) {
                         rightIndex = sequence.indexOf(lastRightAddedTest);
                     }
                     String test1 = pair2.getKey().toString();
                     lastRightAddedTest = pair2.getValue().toString();
-                    sequence.add(rightIndex + 1, test1);
-                    sequence.add(rightIndex + 2, lastRightAddedTest);
-                    if (leftIndex > sequence.indexOf(test1)) {
-                        lastLeftAddedTest = test1;
-                        leftIndex = sequence.indexOf(test1);
-                    }
+                    // System.out.println("RIGHT INDEX: " + rightIndex);
                     String c1 = test1.substring(0, test1.lastIndexOf('.'));
                     String c2 = lastRightAddedTest.substring(0, lastRightAddedTest.lastIndexOf('.'));
-                    processedClasses.add(c1);
+                    if (!test1.equals("LAST")) {
+                        sequence.add(rightIndex + 1, test1);
+                        sequence.add(rightIndex + 2, lastRightAddedTest);
+                        processedClasses.add(c1);
+                        if (testClassEndPointsMap.containsKey(c1)) {
+                            TestClassEndPoints testClassEndPoints = testClassEndPointsMap.get(c1);
+                            testClassEndPoints.setLastTestMethod(test1);
+                        } else {
+                            testClassEndPointsMap.put(c1, new TestClassEndPoints(c1, "", test1));
+                        }
+                    } else {
+                        sequence.add(rightIndex + 1, lastRightAddedTest);
+                    }
                     processedClasses.add(c2);
-                    System.out.println("PAIR2: " + pair2.toString());
+                    if (testClassEndPointsMap.containsKey(c2)) {
+                        TestClassEndPoints testClassEndPoints = testClassEndPointsMap.get(c2);
+                        testClassEndPoints.setFirstTestMethod(lastRightAddedTest);
+                    } else {
+                        testClassEndPointsMap.put(c2, new TestClassEndPoints(c2, lastRightAddedTest, ""));
+                    }
+                    if (!test1.equals("LAST")) {
+                        if (leftIndex > sequence.indexOf(test1)) {
+                            lastLeftAddedTest = test1;
+                            leftIndex = sequence.indexOf(test1);
+                        }
+                    }
+                    // System.out.println("PAIR2: " + pair2.toString());
+                    // System.out.println("PROCLAZZSIZE: " + processedClasses.size());
+                } else {
+                    rightEnd = true;
                 }
-                // System.out.println("ORDER: " + sequence.toString());
-                if (pair1.toString().equals("=") && pair2.toString().equals("=")) {
-                    order.addAll(sequence);
+                // System.out.println(clazzSize + ", " + processedClasses.size());
+                if (leftEnd && rightEnd) {
+                    // System.out.println("SEQUENCE SIZE: " + sequence.size());
+                    if (!tmpClassOrder.isEmpty()) {
+                        if (sequence.size() == 0) {
+                            for (String testClass : testClassesToTests.keySet()) {
+                                if (!processedClasses.contains(testClass)) {
+                                    List<String> tests = testClassesToTests.get(testClass);
+                                    for (String test : tests) {
+                                        if (!tmpClassOrder.contains(test)) {
+                                            // System.out.println("HAHAHA");
+                                            sequence.add("class:" + testClass);
+                                            processedClasses.add(testClass);
+                                            if (!testClassEndPointsMap.containsKey(testClass)) {
+                                                testClassEndPointsMap.put(testClass, new TestClassEndPoints(testClass, "", ""));
+                                            }
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    tmpClassOrder.addAll(sequence);
                     sequence = new LinkedList<>();
                     lastLeftAddedTest = "";
                     lastRightAddedTest = "";
                     leftIndex = 0;
                     rightIndex = 0;
+                    leftEnd = false;
+                    rightEnd = false;
                 }
             }
-            System.out.println("ORDER: " + order);
-            System.exit(1);
+            // System.out.println("ORDER: " + sequence);
+            List<String> classSequence = new LinkedList<>();
+            for (String testInOrder : tmpClassOrder) {
+                String testClassInOrder = testInOrder.substring(0, testInOrder.lastIndexOf("."));
+                if (testInOrder.startsWith("class:")) {
+                    testClassInOrder = testInOrder.substring(6);
+                }
+                if (!classSequence.contains(testClassInOrder)) {
+                    classSequence.add(testClassInOrder);
+                }
+            }
+            /* for (String cl : allTestClasses) {
+                if (!classSequence.contains(cl)) {
+                    System.out.println("NOT CAP: " + cl);
+                }
+            } */
+            // System.out.println("classSequence size: " + classSequence.size());
+            // System.out.println("testClassEndPointsMap size: " + testClassEndPointsMap.size());
+            List<String> order = new LinkedList<>();
+            for (String clazz : classSequence) {
+                if (testClassEndPointsMap.containsKey(clazz)) {
+                    TestClassEndPoints testClassEndPoints = testClassEndPointsMap.get(clazz);
+                    // System.out.println("clazz: " + testClassEndPoints.firstTestMethod + ", " + testClassEndPoints.lastTestMethod);
+                    List<String> testsInThisClass = testClassesToTests.get(clazz);
+                    Set<Pair<String, String>> filteredPairs = new HashSet<>();
+                    // System.out.println("tests size: " + testsInThisClass.size());
+                    // System.out.println("pairs size: " + remainingPairs.size());
+                    for (Pair pair : remainingPairs) {
+                        String test1 = pair.getKey().toString();
+                        String testClass = test1.substring(0, test1.lastIndexOf("."));
+                        if (testClass.equals(clazz)) {
+                            filteredPairs.add(pair);
+                        }
+                    }
+                    // System.out.println("filtered pairs size: " + filteredPairs.size());
+                    List<String> bestSequence = getBestTestMethodOrder(testsInThisClass, filteredPairs, testClassEndPoints);
+                    order.addAll(bestSequence);
+                    // System.out.println("tmp: " + order.size());
+                }
+            }
+            // List<String> reverseOrder = new LinkedList<>(order);
+            // Collections.reverse(reverseOrder);
+            String firstTest = order.get(0);
+            for (int i = 1; i < order.size(); i++) {
+                Pair<String, String> p = new Pair<>(firstTest, order.get(i));
+                remainingCrossClassPairs.remove(p);
+                remainingPairs.remove(p);
+                firstTest = order.get(i);
+            }
+            /* String firstTestInReverse = reverseOrder.get(0);
+            for (int i = 1; i < reverseOrder.size(); i++) {
+                Pair<String, String> p = new Pair<>(firstTestInReverse, reverseOrder.get(i));
+                remainingCrossClassPairs.remove(p);
+                remainingPairs.remove(p);
+                firstTestInReverse = reverseOrder.get(i);
+            } */
+            // .out.println("ORDER SIZE: " + order.size() + ", " + count);
+            orders.add(order);
+            // System.out.println("SIZE: " + order.size());
+            // orders.add(reverseOrder);
+            // System.exit(0);
+            // order.addAll(sequence);
         }
+        System.out.println("ORDERSSIZE: " + orders.size());
     }
 
-    protected Pair getPairs(List<String> sequence, String lastAddedTest, Set<Pair> remainingPairs, Set<String> processedClasses, boolean left) {
-        Map<String, List<String>> occurrenceMap = new HashMap();
+    private void storeOrders() {
+        // put both the intra class pairs and cross class pairs here
+        Set<Pair> remainingPairs = new HashSet<>(pairSet);
+        remainingPairs.addAll(crossClassPairSet);
+        // System.out.println("INITIAL REMAINING PAIRS: " + remainingPairs.size());
+
+        // transfer the TuscanSquare to be actual orders
+        List<List<String>> transformedOrders = new LinkedList<>(orders);
+
+        // get new orders based on the pairs that are covered
+        orders = new LinkedList<>();
+
+        // store the order to pair map to speed up
+        Map<Integer, Set<Pair>> orderToPairs = new HashMap<>();
+        for (int i = 0 ; i < transformedOrders.size() ; i++) {
+            List<String> orderItem = transformedOrders.get(i);
+            Set<Pair> pairsList = new HashSet<>();
+            for (int j = 0 ; j < orderItem.size() - 1 ; j++) {
+                Pair toBeRemoved = new Pair<>(orderItem.get(j), orderItem.get(j + 1));
+                if (remainingPairs.contains(toBeRemoved)) {
+                    pairsList.add(toBeRemoved);
+                }
+            }
+            orderToPairs.put(i, pairsList);
+        }
+
+        // record if this order is used to speed up
+        Set<Integer> used = new HashSet<>();
+
+        // deal with the other orders
+        while (!remainingPairs.isEmpty()) {
+            // System.out.println("REMAINING PAIRS SIZE: " + remainingPairs.size());
+            int maxAdditionalSize = 0;
+            int maxIndex = 0;
+
+            // for each order, check if the union set size with remaining pairs is larger than the current one
+            for (int i = 0 ; i < transformedOrders.size() ; i++) {
+                // if used, then skip
+                if (used.contains(i)) {
+                    continue;
+                }
+
+                // use set to speed up
+                Set<Pair> orderToPair = orderToPairs.get(i);
+                Set<Pair> pairsSet = new HashSet<>();
+                pairsSet.addAll(orderToPair);
+                pairsSet.retainAll(remainingPairs);
+                int potentialSize = pairsSet.size();
+                if (potentialSize > maxAdditionalSize) {
+                    maxAdditionalSize = potentialSize;
+                    maxIndex = i;
+                }
+            }
+            if (transformedOrders.size() == used.size()) {
+                System.out.println("Exception: There are still some remaining pairs but orders have been created!");
+                break;
+            }
+            if (!used.contains(maxIndex)) {
+                used.add(maxIndex);
+                List<String> maxOrder = transformedOrders.get(maxIndex);
+                orders.add(maxOrder);
+                remainingPairs.removeAll(orderToPairs.get(maxIndex));
+                // System.out.println("finalMaxAdditionalSize(change to): " + maxAdditionalSize);
+            }
+        }
+        // System.out.println("FINAL NUM OF ORDERS: " + orders.size());
+    }
+
+    protected Pair getPairs(List<String> sequence, List<String> order, String lastAddedTest, Set<Pair> remainingPairs, Set<String> processedClasses, boolean left) {
+        Map<String, List<String>> occurrenceMap = new HashMap<>();
         for (Pair pairItem : remainingPairs) {
             List<String> valueList = occurrenceMap.getOrDefault(pairItem.getKey(), new LinkedList<>());
             valueList.add((String) pairItem.getValue());
@@ -351,80 +784,129 @@ public class IncDetectorMojo extends DetectorMojo {
         // descending sequence
         Collections.sort(occurrenceSortedList, (o1, o2) -> (o2.getValue().size() - o1.getValue().size()));
 
-        String testClass = "";
+        String lastAddedTestClass = "";
         if (!lastAddedTest.equals("")) {
-            testClass = lastAddedTest.substring(0, lastAddedTest.lastIndexOf('.'));
+            lastAddedTestClass = lastAddedTest.substring(0, lastAddedTest.lastIndexOf('.'));
         }
+
         if (left) {
             for (int i = 0; i < occurrenceSortedList.size(); i++) {
                 String firstTest = occurrenceSortedList.get(i).getKey();
+                /* if (lastAddedTest.equals("") && order.size() == 0) {
+                    System.out.println("BEST TEST IS " + firstTest + " WITH SCORE " + occurrenceSortedList.get(i).getValue().size());
+                } */
                 String firstTestClass = firstTest.substring(0, firstTest.lastIndexOf('.'));
-                if (!sequence.contains(firstTest) && (firstTestClass.equals(testClass) || (lastAddedTest.equals("") && !processedClasses.contains(firstTestClass)))) {
+                if (((!sequence.contains(firstTest) && !order.contains(firstTest)) || testClassesToTests.get(firstTestClass).size() == 1) && (firstTestClass.equals(lastAddedTestClass) || (lastAddedTest.equals("") && !processedClasses.contains(firstTestClass)))) {
                     for (String item : occurrenceSortedList.get(i).getValue()) {
-                        String itemClass = item.substring(0, item.lastIndexOf('.'));
-                        if (!sequence.contains(item) && !processedClasses.contains(itemClass)) {
-                            Pair pair = new Pair<>(item, firstTest);
-                            return pair;
-                        }
+                    // for (int j = 0; j < occurrenceSortedList.size(); j++) { // String item : occurrenceSortedList.get(i).getValue()) {
+                        // if (occurrenceSortedList.get(i).getValue().contains(occurrenceSortedList.get(j).getKey())) {
+                        //     String item = occurrenceSortedList.get(j).getKey();
+                            String itemClass = item.substring(0, item.lastIndexOf('.'));
+                            if ((!sequence.contains(firstTest) && !order.contains(firstTest)) && !processedClasses.contains(itemClass)) {
+                                Pair pair = new Pair<>(item, firstTest);
+                                if (remainingPairs.contains(pair)) {
+                                    if (testClassesToTests.get(firstTestClass).size() == 1) {
+                                        // System.out.println("PAIR IS " + pair);
+                                        return new Pair<>(item, "LAST");
+                                    } else {
+                                        // System.out.println("PAIR IS " + pair);
+                                        return pair;
+                                    }
+                                }
+                            }
+                        // }
                     }
                 }
             }
             // release restriction
-            
-        } else {
-            for (int i = 0; i < occurrenceSortedList.size(); i++) {
-                String firstTest = occurrenceSortedList.get(i).getKey();
-                String firstTestClass = firstTest.substring(0, firstTest.lastIndexOf('.'));
-                if (!sequence.contains(firstTest) && (firstTestClass.equals(testClass) || (lastAddedTest.equals("") && !processedClasses.contains(firstTestClass)))) {
-                    for (String item : occurrenceSortedList.get(i).getValue()) {
-                        String itemClass = item.substring(0, item.lastIndexOf('.'));
-                        if (!sequence.contains(item) && !processedClasses.contains(itemClass)) {
-                            Pair pair = new Pair<>(firstTest, item);
-                            return pair;
+            /* if (lastAddedTest.equals("")) {
+                String firstItem = "";
+                for (String testClassItem : testClassesToTests.keySet()) {
+                    if (!processedClasses.contains(testClassItem)) {
+                        for (String testItem : testClassesToTests.get(testClassItem)) {
+                            if (!sequence.contains(testItem) && !order.contains(testItem)) {
+                                firstItem = testItem;
+                                break;
+                            }
                         }
                     }
                 }
-            }
-        }
-        return new Pair<>("", "");
-    }
-
-    protected String getItem(List<String> order, String test, Set<Pair> remainingPairs, boolean left) {
-        Map<String, List<String>> occurrenceMap = new HashedMap();
-        for (Pair pairItem : remainingPairs) {
-            List<String> valueList = occurrenceMap.getOrDefault(pairItem.getKey(), new LinkedList<>());
-            valueList.add((String) pairItem.getValue());
-            occurrenceMap.put((String) pairItem.getKey(), valueList);
-            List<String> keyList = occurrenceMap.getOrDefault(pairItem.getValue(), new LinkedList<>());
-            keyList.add((String) pairItem.getKey());
-            occurrenceMap.put((String) pairItem.getValue(), keyList);
-        }
-        List<Map.Entry<String, List<String>>> occurrenceSortedList = new ArrayList<>(occurrenceMap.entrySet());
-        // descending order
-        Collections.sort(occurrenceSortedList, (o1, o2) -> (o2.getValue().size() - o1.getValue().size()));
-
-        if (order.isEmpty() && test.equals("")) {
-            return occurrenceSortedList.get(0).getKey();
-        }
-
-        if (left) {
-            for (int i = 0; i < occurrenceSortedList.size(); i++) {
-                String potentialTest = occurrenceSortedList.get(i).getKey();
-                Pair testPair = new Pair<>(potentialTest, test);
-                if (remainingPairs.contains(testPair) && !order.contains(potentialTest)) {
-                    return potentialTest;
+                String firstTestClass = firstItem.substring(0, firstItem.lastIndexOf('.'));
+                String secondItem = "";
+                for (String testClassItem : testClassesToTests.keySet()) {
+                    if (!processedClasses.contains(testClassItem) && !testClassItem.equals(firstTestClass)) {
+                        for (String testItem : testClassesToTests.get(testClassItem)) {
+                            if (!sequence.contains(testItem) && !order.contains(testItem)) {
+                                secondItem = testItem;
+                                break;
+                            }
+                        }
+                    }
                 }
-            }
+                if (!firstItem.equals("") && !secondItem.equals("")) {
+                    return new Pair<>(secondItem, firstItem);
+                }
+            } */
         } else {
             for (int i = 0; i < occurrenceSortedList.size(); i++) {
-                String potentialTest = occurrenceSortedList.get(i).getKey();
-                Pair testPair = new Pair<>(test, potentialTest);
-                if (remainingPairs.contains(testPair) && !order.contains(potentialTest)) {
-                    return potentialTest;
+                String firstTest = occurrenceSortedList.get(i).getKey();
+                /* if (lastAddedTest.equals("") && order.size() == 0) {
+                    System.out.println("BEST TEST IS " + firstTest + " WITH SCORE " + occurrenceSortedList.get(i).getValue().size());
+                } */
+                String firstTestClass = firstTest.substring(0, firstTest.lastIndexOf('.'));
+                if (((!sequence.contains(firstTest) && !order.contains(firstTest)) || testClassesToTests.get(firstTestClass).size() == 1) && (firstTestClass.equals(lastAddedTestClass) || (lastAddedTest.equals("") && !processedClasses.contains(firstTestClass)))) {
+                    for (String item : occurrenceSortedList.get(i).getValue()) {
+                    // for (int j = 0; j < occurrenceSortedList.size(); j++) { // String item : occurrenceSortedList.get(i).getValue()) {
+                    //     if (occurrenceSortedList.get(i).getValue().contains(occurrenceSortedList.get(j).getKey())) {
+                    //         String item = occurrenceSortedList.get(j).getKey();
+                            String itemClass = item.substring(0, item.lastIndexOf('.'));
+                            if ((!sequence.contains(firstTest) && !order.contains(firstTest)) && !processedClasses.contains(itemClass)) {
+                                Pair pair = new Pair<>(firstTest, item);
+                                if (remainingPairs.contains(pair)) {
+                                    if (testClassesToTests.get(firstTestClass).size() == 1) {
+                                        // System.out.println("PAIR IS " + pair);
+                                        return new Pair<>("LAST", item);
+                                    } else {
+                                        // System.out.println("PAIR IS " + pair);
+                                        return pair;
+                                    }
+                                }
+                            }
+                        // }
+                    }
                 }
             }
+            // release restriction
+            /* if (lastAddedTest.equals("")) {
+                String firstItem = "";
+                for (String testClassItem : testClassesToTests.keySet()) {
+                    if (!processedClasses.contains(testClassItem)) {
+                        for (String testItem : testClassesToTests.get(testClassItem)) {
+                            if (!sequence.contains(testItem) && !order.contains(testItem)) {
+                                firstItem = testItem;
+                                break;
+                            }
+                        }
+                    }
+                }
+                String firstTestClass = firstItem.substring(0, firstItem.lastIndexOf('.'));
+                String secondItem = "";
+                for (String testClassItem : testClassesToTests.keySet()) {
+                    if (!processedClasses.contains(testClassItem) && !testClassItem.equals(firstTestClass)) {
+                        for (String testItem : testClassesToTests.get(testClassItem)) {
+                            if (!sequence.contains(testItem) && !order.contains(testItem)) {
+                                secondItem = testItem;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (!firstItem.equals("") && !secondItem.equals("")) {
+                    return new Pair<>(firstItem, secondItem);
+                }
+            } */
         }
-        return "";
+        return new Pair<>("", "");
     }
 
     private ClassLoader createClassLoader(Classpath sfClassPath) {
@@ -527,7 +1009,6 @@ public class IncDetectorMojo extends DetectorMojo {
                 classes.add(clazz);
             }
         }
-
         return classes;
     }
 
