@@ -213,7 +213,7 @@ public class IncDetectorMojo extends DetectorMojo {
                             continue;
                         }
                         String extForm = url.toExternalForm();
-                        System.out.println("extForm: " + extForm);
+                        // System.out.println("extForm: " + extForm);
                         if (extForm.startsWith("jar:")) {
                             // System.out.println("extForm");
                             continue;
