@@ -430,6 +430,7 @@ public class IncDetectorMojo extends DetectorMojo {
 
         return bestSequence;
     }
+
     /* private List<String> findBestNextTestSequence(String test, Set<Pair<String, String>> pairs, String lastTest, Set<String> alreadySelectedTests, boolean reverse) {
         List<String> bestSequence = new LinkedList<>();
         // bestSequence.add(test)
@@ -523,7 +524,7 @@ public class IncDetectorMojo extends DetectorMojo {
                         rightIndex = sequence.indexOf(lastRightAddedTest);
                     }
                     lastLeftAddedTest = pair1.getKey().toString();
-                    String test2 = pair1.getValue().toString();
+                    String test2 = pair1.getValue().toString();;
                     // System.out.println("LEFT INDEX: " + leftIndex);
                     String c1 = lastLeftAddedTest.substring(0, lastLeftAddedTest.lastIndexOf('.'));
                     if (!test2.equals("LAST")) {
@@ -570,9 +571,9 @@ public class IncDetectorMojo extends DetectorMojo {
                     String test1 = pair2.getKey().toString();
                     lastRightAddedTest = pair2.getValue().toString();
                     // System.out.println("RIGHT INDEX: " + rightIndex);
-                    String c1 = test1.substring(0, test1.lastIndexOf('.'));
                     String c2 = lastRightAddedTest.substring(0, lastRightAddedTest.lastIndexOf('.'));
                     if (!test1.equals("LAST")) {
+                        String c1 = test1.substring(0, test1.lastIndexOf('.'));
                         sequence.add(rightIndex + 1, test1);
                         sequence.add(rightIndex + 2, lastRightAddedTest);
                         processedClasses.add(c1);
@@ -603,8 +604,8 @@ public class IncDetectorMojo extends DetectorMojo {
                 } else {
                     rightEnd = true;
                 }
-                // System.out.println(clazzSize + ", " + processedClasses.size());
-                if (leftEnd && rightEnd) {
+                // .println(clazzSize + ", " + processedClasses.size());
+                if (leftEnd && rightEnd || (processedClasses.size() == clazzSize)) {
                     // System.out.println("SEQUENCE SIZE: " + sequence.size());
                     if (!tmpClassOrder.isEmpty()) {
                         if (sequence.size() == 0) {
@@ -636,7 +637,8 @@ public class IncDetectorMojo extends DetectorMojo {
                     rightEnd = false;
                 }
             }
-            // System.out.println("ORDER: " + sequence);
+            // System.out.println("ORDER: " + tmpClassOrder);
+            // System.out.println("REMAINING PAIRS: " + remainingCrossClassPairs);
             List<String> classSequence = new LinkedList<>();
             for (String testInOrder : tmpClassOrder) {
                 String testClassInOrder = testInOrder.substring(0, testInOrder.lastIndexOf("."));
@@ -652,7 +654,7 @@ public class IncDetectorMojo extends DetectorMojo {
                     System.out.println("NOT CAP: " + cl);
                 }
             } */
-            // System.out.println("classSequence size: " + classSequence.size());
+            // System.out.println("classSequence: " + classSequence);
             // System.out.println("testClassEndPointsMap size: " + testClassEndPointsMap.size());
             List<String> order = new LinkedList<>();
             for (String clazz : classSequence) {
@@ -678,6 +680,9 @@ public class IncDetectorMojo extends DetectorMojo {
             }
             // List<String> reverseOrder = new LinkedList<>(order);
             // Collections.reverse(reverseOrder);
+            if (order.size() == 0) {
+                System.exit(0);
+            }
             String firstTest = order.get(0);
             for (int i = 1; i < order.size(); i++) {
                 Pair<String, String> p = new Pair<>(firstTest, order.get(i));
@@ -694,12 +699,18 @@ public class IncDetectorMojo extends DetectorMojo {
             } */
             // .out.println("ORDER SIZE: " + order.size() + ", " + count);
             orders.add(order);
+            // System.out.println("ORDERSSIZE: " + orders.size());
             // System.out.println("SIZE: " + order.size());
             // orders.add(reverseOrder);
             // System.exit(0);
             // order.addAll(sequence);
         }
         System.out.println("ORDERSSIZE: " + orders.size());
+        int index = 0;
+        for(List<String> orderItem : orders) {
+            writeOrder(orderItem, artifactsDir, index);
+            index ++;
+        }
     }
 
     private void storeOrders() {
@@ -784,6 +795,11 @@ public class IncDetectorMojo extends DetectorMojo {
         // descending sequence
         Collections.sort(occurrenceSortedList, (o1, o2) -> (o2.getValue().size() - o1.getValue().size()));
 
+        /* for (int i = 0; i < occurrenceSortedList.size(); i++) {
+            String firstTest = occurrenceSortedList.get(i).getKey();
+            System.out.println(firstTest + ": " + occurrenceSortedList.get(i).getValue().size());
+        }
+        System.exit(0); */
         String lastAddedTestClass = "";
         if (!lastAddedTest.equals("")) {
             lastAddedTestClass = lastAddedTest.substring(0, lastAddedTest.lastIndexOf('.'));
@@ -948,6 +964,8 @@ public class IncDetectorMojo extends DetectorMojo {
         getSureFireClassPath(project);
         loader = createClassLoader(sureFireClassPath);
         getPairs();
+        // System.out.println(crossClassPairSet.size());
+        // System.out.println(pairSet.size());
     }
 
     private String getArtifactsDir() throws FileNotFoundException {
@@ -1098,6 +1116,19 @@ public class IncDetectorMojo extends DetectorMojo {
                 int size = orders.size();
                 String s = Integer.toString(size);
                 writer.write(s);
+                writer.write(System.lineSeparator());
+            }
+        } catch (IOException ioe) {
+            ioe.printStackTrace();
+        }
+    }
+
+
+    private void writeOrder(List<String> order, String artifactsDir, int index) {
+        String outFilename = Paths.get(artifactsDir + "/orders", "order-" + index).toString();
+        try (BufferedWriter writer = Writer.getWriter(outFilename)) {
+            for (String test : order) {
+                writer.write(test);
                 writer.write(System.lineSeparator());
             }
         } catch (IOException ioe) {
