@@ -506,8 +506,8 @@ public class IncDetectorMojo extends DetectorMojo {
             int rightIndex = 0;
             boolean leftEnd = false;
             boolean rightEnd = false;
-            // System.out.println("CrossPairsSize: " + remainingCrossClassPairs.size());
-            // System.out.println("IntraPairsSize: " + remainingPairs.size());
+            System.out.println("CrossPairsSize: " + remainingCrossClassPairs.size());
+            System.out.println("IntraPairsSize: " + remainingPairs.size());
             while (processedClasses.size() < clazzSize) {
                 Pair pair1 = new Pair("", "");
                 if (!leftEnd) {
@@ -552,6 +552,7 @@ public class IncDetectorMojo extends DetectorMojo {
                             rightIndex = sequence.indexOf(test2);
                         }
                     }
+
                     // System.out.println("PAIR1: " + pair1.toString());
                     // System.out.println("PROCLAZZSIZE: " + processedClasses.size());
                 } else {
@@ -637,7 +638,7 @@ public class IncDetectorMojo extends DetectorMojo {
                     rightEnd = false;
                 }
             }
-            // System.out.println("ORDER: " + tmpClassOrder);
+            System.out.println("ORDER: " + tmpClassOrder);
             // System.out.println("REMAINING PAIRS: " + remainingCrossClassPairs);
             List<String> classSequence = new LinkedList<>();
             for (String testInOrder : tmpClassOrder) {
@@ -654,7 +655,7 @@ public class IncDetectorMojo extends DetectorMojo {
                     System.out.println("NOT CAP: " + cl);
                 }
             } */
-            // System.out.println("classSequence: " + classSequence);
+            System.out.println("classSequence: " + classSequence);
             // System.out.println("testClassEndPointsMap size: " + testClassEndPointsMap.size());
             List<String> order = new LinkedList<>();
             for (String clazz : classSequence) {
@@ -697,7 +698,7 @@ public class IncDetectorMojo extends DetectorMojo {
                 remainingPairs.remove(p);
                 firstTestInReverse = reverseOrder.get(i);
             } */
-            // .out.println("ORDER SIZE: " + order.size() + ", " + count);
+            // System.out.println("ORDER SIZE: " + order.size());
             orders.add(order);
             // System.out.println("ORDERSSIZE: " + orders.size());
             // System.out.println("SIZE: " + order.size());
@@ -817,19 +818,22 @@ public class IncDetectorMojo extends DetectorMojo {
                     // for (int j = 0; j < occurrenceSortedList.size(); j++) { // String item : occurrenceSortedList.get(i).getValue()) {
                         // if (occurrenceSortedList.get(i).getValue().contains(occurrenceSortedList.get(j).getKey())) {
                         //     String item = occurrenceSortedList.get(j).getKey();
-                            String itemClass = item.substring(0, item.lastIndexOf('.'));
+			    String itemClass = item.substring(0, item.lastIndexOf('.'));
+			    Pair pair = new Pair<>(item, firstTest);
+			    /* if (order.size() == 0) {
+                                System.out.println("???Left: " + item + ", " + firstTest + " " + remainingPairs.contains(new Pair<>(item, firstTest)));
+                                System.out.println(processedClasses.contains(itemClass));
+                            } */
                             if ((!sequence.contains(firstTest) && !order.contains(firstTest)) && !processedClasses.contains(itemClass)) {
-                                Pair pair = new Pair<>(item, firstTest);
                                 if (remainingPairs.contains(pair)) {
-                                    if (testClassesToTests.get(firstTestClass).size() == 1) {
-                                        // System.out.println("PAIR IS " + pair);
-                                        return new Pair<>(item, "LAST");
-                                    } else {
-                                        // System.out.println("PAIR IS " + pair);
-                                        return pair;
-                                    }
+                                    return pair;
                                 }
-                            }
+                            } 
+			    if ((sequence.contains(firstTest) || order.contains(firstTest)) && !processedClasses.contains(itemClass)  && testClassesToTests.get(firstTestClass).size() == 1) {
+			        if (remainingPairs.contains(pair)) {
+				    return new Pair<>(item, "LAST");
+				}
+			    } 
                         // }
                     }
                 }
@@ -876,19 +880,22 @@ public class IncDetectorMojo extends DetectorMojo {
                     //     if (occurrenceSortedList.get(i).getValue().contains(occurrenceSortedList.get(j).getKey())) {
                     //         String item = occurrenceSortedList.get(j).getKey();
                             String itemClass = item.substring(0, item.lastIndexOf('.'));
-                            if ((!sequence.contains(firstTest) && !order.contains(firstTest)) && !processedClasses.contains(itemClass)) {
-                                Pair pair = new Pair<>(firstTest, item);
+			    Pair pair = new Pair<>(firstTest, item);
+			    /* if (order.size() == 0) {
+                                System.out.println("???Right: " + firstTest + ", " + item + " " + remainingPairs.contains(new Pair<>(firstTest, item)));
+                                System.out.println(processedClasses.contains(itemClass));
+                            } */
+			    if ((!sequence.contains(firstTest) && !order.contains(firstTest)) && !processedClasses.contains(itemClass)) {
                                 if (remainingPairs.contains(pair)) {
-                                    if (testClassesToTests.get(firstTestClass).size() == 1) {
-                                        // System.out.println("PAIR IS " + pair);
-                                        return new Pair<>("LAST", item);
-                                    } else {
-                                        // System.out.println("PAIR IS " + pair);
-                                        return pair;
-                                    }
+                                    return pair;
                                 }
                             }
-                        // }
+                            if ((sequence.contains(firstTest) || order.contains(firstTest)) && !processedClasses.contains(itemClass) && testClassesToTests.get(firstTestClass).size() == 1) {
+                                if (remainingPairs.contains(pair)) {
+				    return new Pair<>("LAST", item);
+				}
+                            }
+			// }
                     }
                 }
             }
