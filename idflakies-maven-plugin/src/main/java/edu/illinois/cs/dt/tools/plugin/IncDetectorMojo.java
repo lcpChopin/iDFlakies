@@ -29,6 +29,7 @@ import java.io.InputStream;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.security.MessageDigest;
@@ -109,6 +110,10 @@ public class IncDetectorMojo extends DetectorMojo {
 
     protected Map<String, List<String>> testClassesToTests;
 
+    protected static String DOT = ".";
+
+    protected static String CLASS_EXTENSION = ".class";
+
     @Override
     public void execute() {
         superExecute();
@@ -173,7 +178,13 @@ public class IncDetectorMojo extends DetectorMojo {
         return null;
     }
 
+    public static String toClassName(String fqn) {
+        return fqn.replace(DOT, File.separator) + CLASS_EXTENSION;
+    }
+
     private void getPairs() {
+        // System.out.println("PACKAGING: " + mavenProject.getModules());
+        // System.exit(0);
         Path path = relativePath(PathManager.modulePath(), Paths.get(pairsFile));
         try {
             Set<String> fieldsList = new HashSet<>();
@@ -197,7 +208,18 @@ public class IncDetectorMojo extends DetectorMojo {
                         String className = field.substring(0, field.lastIndexOf('.'));
                         String fieldName = field.substring(field.lastIndexOf('.') + 1);
                         Class clazz = loader.loadClass(className);
+                        URL url = loader.getResource(toClassName(className));
+                        if (url == null) {
+                            continue;
+                        }
+                        String extForm = url.toExternalForm();
+                        System.out.println("extForm: " + extForm);
+                        if (extForm.startsWith("jar:")) {
+                            // System.out.println("extForm");
+                            continue;
+                        }
                         Field field1 = clazz.getDeclaredField(fieldName);
+                        isInside(field1);
                         if (!isImmutable(field1)) {
                             // System.out.println("TEST: " + test + "; " + field);
                             fieldsSet.add(field);
@@ -205,9 +227,9 @@ public class IncDetectorMojo extends DetectorMojo {
                             testsToFields.put(test, fieldsSet);
                         }
                     } catch (ClassNotFoundException e) {
-                        e.printStackTrace();
+                        // e.printStackTrace();
                     } catch (NoSuchFieldException e) {
-                        e.printStackTrace();
+                        // e.printStackTrace();
                     }
                 }
             }
@@ -638,7 +660,7 @@ public class IncDetectorMojo extends DetectorMojo {
                     rightEnd = false;
                 }
             }
-            System.out.println("ORDER: " + tmpClassOrder);
+            // System.out.println("ORDER: " + tmpClassOrder);
             // System.out.println("REMAINING PAIRS: " + remainingCrossClassPairs);
             List<String> classSequence = new LinkedList<>();
             for (String testInOrder : tmpClassOrder) {
@@ -655,7 +677,7 @@ public class IncDetectorMojo extends DetectorMojo {
                     System.out.println("NOT CAP: " + cl);
                 }
             } */
-            System.out.println("classSequence: " + classSequence);
+            // System.out.println("classSequence: " + classSequence);
             // System.out.println("testClassEndPointsMap size: " + testClassEndPointsMap.size());
             List<String> order = new LinkedList<>();
             for (String clazz : classSequence) {
@@ -1113,6 +1135,13 @@ public class IncDetectorMojo extends DetectorMojo {
                 return true;
             }
         }
+        return false;
+    }
+
+    private boolean isInside(Field field) {
+        boolean isInside = false;
+
+        // if (field.getDeclaringClass())
         return false;
     }
 
