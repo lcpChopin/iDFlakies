@@ -26,7 +26,6 @@ public class DetectorUtil {
         final boolean allMustPass = Configuration.config().getProperty("dt.detector.original_order.all_must_pass", true);
 
         System.out.println("[INFO] Getting original results (" + originalOrder.size() + " tests).");
-
         TestRunResult origResult = null;
 
         boolean allPassing = false;

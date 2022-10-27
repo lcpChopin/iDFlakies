@@ -135,7 +135,8 @@ public class IncDetectorMojo extends DetectorMojo {
         try {
             allTestClasses = getTestClasses(mavenProject, this.runner.framework());
             allTestMethods = getTests(mavenProject, this.runner.framework());
-            getTestClassesToTests();
+            getPairs();
+	    getTestClassesToTests();
             storeOrdersByAsm();
             storeOrders();
             writeNumOfOrders(orders, artifactsDir);
@@ -163,7 +164,8 @@ public class IncDetectorMojo extends DetectorMojo {
                 if (rounds > orders.size()) {
                     newRounds = orders.size();
                 }
-                detector = DetectorFactory.makeDetector(this.runner, mavenProject.getBasedir(), tests, newRounds, orders);
+                return null;
+		// detector = DetectorFactory.makeDetector(this.runner, mavenProject.getBasedir(), tests, newRounds, orders);
             } else {
                 detector = DetectorFactory.makeDetector(this.runner, mavenProject.getBasedir(), tests, rounds);
             }
@@ -193,8 +195,14 @@ public class IncDetectorMojo extends DetectorMojo {
             String str;
             while ((str = in.readLine()) != null) {
                 // System.out.println(str);
-                String test = str.substring(0, str.indexOf(','));
+                if (!str.contains(",")) {
+		    continue;
+		}
+		String test = str.substring(0, str.indexOf(','));
                 String field = str.substring(str.indexOf(',') + 1);
+		if (!allTestMethods.contains(test)) {
+                    continue;
+                }
                 Set<String> fieldsSet = testsToFields.getOrDefault(test, new HashSet<>());
                 if (fieldsList.contains(field)) {
                     if (nonImmutableFields.contains(field)) {
@@ -627,10 +635,11 @@ public class IncDetectorMojo extends DetectorMojo {
                 } else {
                     rightEnd = true;
                 }
+		// System.out.println(leftEnd + "," + rightEnd);
                 // .println(clazzSize + ", " + processedClasses.size());
                 if (leftEnd && rightEnd || (processedClasses.size() == clazzSize)) {
                     // System.out.println("SEQUENCE SIZE: " + sequence.size());
-                    if (!tmpClassOrder.isEmpty()) {
+                    if (processedClasses.size() != clazzSize) {
                         if (sequence.size() == 0) {
                             for (String testClass : testClassesToTests.keySet()) {
                                 if (!processedClasses.contains(testClass)) {
@@ -835,7 +844,10 @@ public class IncDetectorMojo extends DetectorMojo {
                     System.out.println("BEST TEST IS " + firstTest + " WITH SCORE " + occurrenceSortedList.get(i).getValue().size());
                 } */
                 String firstTestClass = firstTest.substring(0, firstTest.lastIndexOf('.'));
-                if (((!sequence.contains(firstTest) && !order.contains(firstTest)) || testClassesToTests.get(firstTestClass).size() == 1) && (firstTestClass.equals(lastAddedTestClass) || (lastAddedTest.equals("") && !processedClasses.contains(firstTestClass)))) {
+                if (!testClassesToTests.containsKey(firstTestClass)) {
+                    continue;
+                }
+		if (((!sequence.contains(firstTest) && !order.contains(firstTest)) || testClassesToTests.get(firstTestClass).size() == 1) && (firstTestClass.equals(lastAddedTestClass) || (lastAddedTest.equals("") && !processedClasses.contains(firstTestClass)))) {
                     for (String item : occurrenceSortedList.get(i).getValue()) {
                     // for (int j = 0; j < occurrenceSortedList.size(); j++) { // String item : occurrenceSortedList.get(i).getValue()) {
                         // if (occurrenceSortedList.get(i).getValue().contains(occurrenceSortedList.get(j).getKey())) {
@@ -896,7 +908,12 @@ public class IncDetectorMojo extends DetectorMojo {
                     System.out.println("BEST TEST IS " + firstTest + " WITH SCORE " + occurrenceSortedList.get(i).getValue().size());
                 } */
                 String firstTestClass = firstTest.substring(0, firstTest.lastIndexOf('.'));
-                if (((!sequence.contains(firstTest) && !order.contains(firstTest)) || testClassesToTests.get(firstTestClass).size() == 1) && (firstTestClass.equals(lastAddedTestClass) || (lastAddedTest.equals("") && !processedClasses.contains(firstTestClass)))) {
+                // System.out.println("!!!" + firstTestClass);
+		if (!testClassesToTests.containsKey(firstTestClass)) {
+		    continue;
+		}
+		// System.out.println("???: " + testClassesToTests.get(firstTestClass));
+		if (((!sequence.contains(firstTest) && !order.contains(firstTest)) || testClassesToTests.get(firstTestClass).size() == 1) && (firstTestClass.equals(lastAddedTestClass) || (lastAddedTest.equals("") && !processedClasses.contains(firstTestClass)))) {
                     for (String item : occurrenceSortedList.get(i).getValue()) {
                     // for (int j = 0; j < occurrenceSortedList.size(); j++) { // String item : occurrenceSortedList.get(i).getValue()) {
                     //     if (occurrenceSortedList.get(i).getValue().contains(occurrenceSortedList.get(j).getKey())) {
@@ -992,7 +1009,7 @@ public class IncDetectorMojo extends DetectorMojo {
 
         getSureFireClassPath(project);
         loader = createClassLoader(sureFireClassPath);
-        getPairs();
+        // getPairs();
         // System.out.println(crossClassPairSet.size());
         // System.out.println(pairSet.size());
     }
