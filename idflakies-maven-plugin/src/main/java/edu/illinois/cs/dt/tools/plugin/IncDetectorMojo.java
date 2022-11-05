@@ -260,7 +260,29 @@ public class IncDetectorMojo extends DetectorMojo {
         } catch (IOException e) {
             e.printStackTrace();
         }
-        for (String key: fieldsToTests.keySet()) {
+        List<String> testsInTestsToFields = new LinkedList<>();
+        for (String key : testsToFields.keySet()) {
+            testsInTestsToFields.add(key);
+        }
+        for (int i = 0; i < testsInTestsToFields.size() - 1; i++) {
+            for (int j = i + 1; j < testsInTestsToFields.size(); j++) {
+                String firstTest = testsInTestsToFields.get(i);
+                String secondTest = testsInTestsToFields.get(j);
+                if (!testsToFields.get(firstTest).retainAll(testsToFields.get(secondTest))) {
+                    continue;
+                }
+                String clzName0 = firstTest.substring(0, firstTest.lastIndexOf('.'));
+                String clzName1 = secondTest.substring(0, secondTest.lastIndexOf('.'));
+                if (!clzName0.equals(clzName1)) {
+                    crossClassPairSet.add(new Pair<>(firstTest, secondTest));
+                    crossClassPairSet.add(new Pair<>(secondTest, firstTest));
+                } else {
+                    pairSet.add(new Pair<>(firstTest, secondTest));
+                    pairSet.add(new Pair<>(secondTest, firstTest));
+                }
+            }
+        }
+        /* for (String key: fieldsToTests.keySet()) {
             Set<String> testsSet = fieldsToTests.get(key);
             List<String> testsList = new LinkedList<>();
             for (String testItem : testsSet) {
@@ -279,7 +301,7 @@ public class IncDetectorMojo extends DetectorMojo {
                     }
                 }
             }
-        }
+        } */
 	writeNumOfPairs(artifactsDir, crossClassPairSet, "num-of-cross-class-pairs");
 	writePairs(artifactsDir, crossClassPairSet, "cross-class-pairs");
 	writeNumOfPairs(artifactsDir, pairSet, "num-of-intra-class-pairs");
