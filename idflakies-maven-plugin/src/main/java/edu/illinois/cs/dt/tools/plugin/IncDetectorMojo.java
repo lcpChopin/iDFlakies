@@ -104,6 +104,8 @@ public class IncDetectorMojo extends DetectorMojo {
 
     protected String pairsFile;
 
+    protected String module;
+
     protected Map<String, Set<String>> fieldsToTests;
 
     protected Map<String, Set<String>> testsToFields;
@@ -124,6 +126,10 @@ public class IncDetectorMojo extends DetectorMojo {
 
         try {
             defineSettings(logger, mavenProject);
+	    String baseDir = mavenProject.getBasedir().toString();
+	    if (!module.equals(".") && !baseDir.endsWith(module)) {
+                return;
+            }
             loadTestRunners(logger, mavenProject);
         } catch (IOException e) {
             e.printStackTrace();
@@ -132,19 +138,22 @@ public class IncDetectorMojo extends DetectorMojo {
             return;
         }
 
+	long startTime = System.currentTimeMillis();
         try {
+
             allTestClasses = getTestClasses(mavenProject, this.runner.framework());
             allTestMethods = getTests(mavenProject, this.runner.framework());
-            getPairs();
+	    getPairs();
 	    getTestClassesToTests();
             storeOrdersByAsm();
-            storeOrders();
+            // storeOrders();
             writeNumOfOrders(orders, artifactsDir);
         } catch (IOException e) {
             e.printStackTrace();
         }
-
-        long startTime = System.currentTimeMillis();
+        
+	timing(startTime);
+        startTime = System.currentTimeMillis();
         logger.runAndLogError(() -> detectorExecute(logger, mavenProject, moduleRounds(coordinates)));
         timing(startTime);
     }
@@ -164,8 +173,11 @@ public class IncDetectorMojo extends DetectorMojo {
                 if (rounds > orders.size()) {
                     newRounds = orders.size();
                 }
-                return null;
-		// detector = DetectorFactory.makeDetector(this.runner, mavenProject.getBasedir(), tests, newRounds, orders);
+		String baseDir = mavenProject.getBasedir().toString();
+		if (!module.equals(".") && !baseDir.endsWith(module)) {
+                    return null;
+		}
+		detector = DetectorFactory.makeDetector(this.runner, mavenProject.getBasedir(), tests, newRounds, orders);
             } else {
                 detector = DetectorFactory.makeDetector(this.runner, mavenProject.getBasedir(), tests, rounds);
             }
@@ -200,6 +212,9 @@ public class IncDetectorMojo extends DetectorMojo {
 		}
 		String test = str.substring(0, str.indexOf(','));
                 String field = str.substring(str.indexOf(',') + 1);
+		if (test.contains("[")) {
+		    test = test.substring(0, test.indexOf('['));
+		}	
 		if (!allTestMethods.contains(test)) {
                     continue;
                 }
@@ -215,7 +230,7 @@ public class IncDetectorMojo extends DetectorMojo {
                     try {
                         String className = field.substring(0, field.lastIndexOf('.'));
                         String fieldName = field.substring(field.lastIndexOf('.') + 1);
-                        Class clazz = loader.loadClass(className);
+			Class clazz = loader.loadClass(className);
                         URL url = loader.getResource(toClassName(className));
                         if (url == null) {
                             continue;
@@ -265,6 +280,15 @@ public class IncDetectorMojo extends DetectorMojo {
                 }
             }
         }
+	writeNumOfPairs(artifactsDir, crossClassPairSet, "num-of-cross-class-pairs");
+	writePairs(artifactsDir, crossClassPairSet, "cross-class-pairs");
+	writeNumOfPairs(artifactsDir, pairSet, "num-of-intra-class-pairs");
+	writePairs(artifactsDir, pairSet, "intra-class-pairs");
+    	Set<Pair> allPairs = new HashSet<Pair>();
+	allPairs.addAll(crossClassPairSet);
+	allPairs.addAll(pairSet);
+	writeNumOfPairs(artifactsDir, allPairs, "num-of-all-pairs");
+	writePairs(artifactsDir, allPairs, "all-pairs");
     }
 
     protected void getTestClassesToTests() {
@@ -538,7 +562,10 @@ public class IncDetectorMojo extends DetectorMojo {
             boolean rightEnd = false;
             System.out.println("CrossPairsSize: " + remainingCrossClassPairs.size());
             System.out.println("IntraPairsSize: " + remainingPairs.size());
-            while (processedClasses.size() < clazzSize) {
+            /* if (remainingPairs.size() == 2) {
+	    	System.out.println(remainingPairs);
+	    } */
+	    while (processedClasses.size() < clazzSize) {
                 Pair pair1 = new Pair("", "");
                 if (!leftEnd) {
                     pair1 = getPairs(sequence, tmpClassOrder, lastLeftAddedTest, remainingCrossClassPairs, processedClasses, true);
@@ -705,8 +732,12 @@ public class IncDetectorMojo extends DetectorMojo {
                         }
                     }
                     // System.out.println("filtered pairs size: " + filteredPairs.size());
-                    List<String> bestSequence = getBestTestMethodOrder(testsInThisClass, filteredPairs, testClassEndPoints);
-                    order.addAll(bestSequence);
+		    List<String> bestSequence = getBestTestMethodOrder(testsInThisClass, filteredPairs, testClassEndPoints);
+                    /* if (clazz.equals("org.springframework.boot.actuate.autoconfigure.metrics.test.MetricsIntegrationTests")) {
+                    	System.out.println(bestSequence);
+			System.out.println(testClassEndPoints.firstTestMethod + ", " +  testClassEndPoints.lastTestMethod);
+		    } */
+		    order.addAll(bestSequence);
                     // System.out.println("tmp: " + order.size());
                 }
             }
@@ -827,10 +858,24 @@ public class IncDetectorMojo extends DetectorMojo {
         // descending sequence
         Collections.sort(occurrenceSortedList, (o1, o2) -> (o2.getValue().size() - o1.getValue().size()));
 
-        /* for (int i = 0; i < occurrenceSortedList.size(); i++) {
+	/* Map<String, Integer> testClassesToTimes = new HashMap<>();
+        for (int i = 0; i < occurrenceSortedList.size(); i++) {
             String firstTest = occurrenceSortedList.get(i).getKey();
-            System.out.println(firstTest + ": " + occurrenceSortedList.get(i).getValue().size());
+	    String firstTestClazz = firstTest.substring(0, firstTest.lastIndexOf('.'));
+            if (!testClassesToTimes.containsKey(firstTestClazz)) {
+	    	testClassesToTimes.put(firstTestClazz, occurrenceSortedList.get(i).getValue().size());
+	    } else {
+		Integer num = testClassesToTimes.get(firstTestClazz);
+		testClassesToTimes.put(firstTestClazz, num + occurrenceSortedList.get(i).getValue().size());
+	    }
+	    // System.out.println(firstTest + ": " + occurrenceSortedList.get(i).getValue().size());
         }
+	List<Map.Entry<String, Integer>> testClassesToTimesList = new ArrayList<>(testClassesToTimes.entrySet());
+        // descending sequence
+        Collections.sort(testClassesToTimesList, (o1, o2) -> (o2.getValue() - o1.getValue()));
+	for (int i = 0; i < testClassesToTimesList.size(); i++) {
+	    System.out.println(testClassesToTimesList.get(i).getKey() + ": " + testClassesToTimesList.get(i).getValue());
+	}
         System.exit(0); */
         String lastAddedTestClass = "";
         if (!lastAddedTest.equals("")) {
@@ -997,6 +1042,7 @@ public class IncDetectorMojo extends DetectorMojo {
         super.defineSettings(logger, project);
 
         pairsFile = Configuration.config().getProperty("dt.asm.pairsfile", "");
+ 	module = Configuration.config().getProperty("dt.asm.module", "");	
 
         artifactsDir = getArtifactsDir();
         testsToFields = new HashMap();
@@ -1181,7 +1227,35 @@ public class IncDetectorMojo extends DetectorMojo {
         String outFilename = Paths.get(artifactsDir + "/orders", "order-" + index).toString();
         try (BufferedWriter writer = Writer.getWriter(outFilename)) {
             for (String test : order) {
-                writer.write(test);
+                int i = allTestMethods.indexOf(test);
+	        String s = Integer.toString(i);	
+		writer.write(s);
+                writer.write(System.lineSeparator());
+            }
+        } catch (IOException ioe) {
+            ioe.printStackTrace();
+        }
+    }
+
+    private void writeNumOfPairs(String artifactsDir, Set<Pair> pairSet, String fileName) {
+        String outFilename = Paths.get(artifactsDir, fileName).toString();
+        try (BufferedWriter writer = Writer.getWriter(outFilename)) {
+            if (pairSet != null) {
+                int size = pairSet.size();
+                String s = Integer.toString(size);
+                writer.write(s);
+                writer.write(System.lineSeparator());
+            }
+	} catch (IOException ioe) {
+            ioe.printStackTrace();
+        }
+    }
+
+    private void writePairs(String artifactsDir, Set<Pair> pairSet, String fileName) {
+        String outFilename = Paths.get(artifactsDir, fileName).toString();
+        try (BufferedWriter writer = Writer.getWriter(outFilename)) {
+            for (Pair pair : pairSet) {
+                writer.write(pair.getKey() + "," + pair.getValue());
                 writer.write(System.lineSeparator());
             }
         } catch (IOException ioe) {
