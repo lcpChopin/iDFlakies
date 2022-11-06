@@ -746,18 +746,29 @@ public class IncDetectorMojo extends DetectorMojo {
                     TestClassEndPoints testClassEndPoints = testClassEndPointsMap.get(clazz);
                     // System.out.println("clazz: " + testClassEndPoints.firstTestMethod + ", " + testClassEndPoints.lastTestMethod);
                     List<String> testsInThisClass = testClassesToTests.get(clazz);
+                    Set<String> neededTestsSet = new HashSet<>();
                     Set<Pair<String, String>> filteredPairs = new HashSet<>();
                     // System.out.println("tests size: " + testsInThisClass.size());
                     // System.out.println("pairs size: " + remainingPairs.size());
                     for (Pair pair : remainingPairs) {
                         String test1 = pair.getKey().toString();
+                        String test2 = pair.getValue().toString();
                         String testClass = test1.substring(0, test1.lastIndexOf("."));
                         if (testClass.equals(clazz)) {
                             filteredPairs.add(pair);
+                            neededTestsSet.add(test1);
+                            neededTestsSet.add(test2);
                         }
                     }
+                    if (!testClassEndPoints.firstTestMethod.equals("")) {
+                        neededTestsSet.add(testClassEndPoints.firstTestMethod);
+                    }
+                    if (!testClassEndPoints.lastTestMethod.equals("")) {
+                        neededTestsSet.add(testClassEndPoints.lastTestMethod);
+                    }
+                    List<String> neededTests = new LinkedList<>(neededTestsSet);
                     // System.out.println("filtered pairs size: " + filteredPairs.size());
-		    List<String> bestSequence = getBestTestMethodOrder(testsInThisClass, filteredPairs, testClassEndPoints);
+		            List<String> bestSequence = getBestTestMethodOrder(neededTests, filteredPairs, testClassEndPoints);
                     /* if (clazz.equals("org.springframework.boot.actuate.autoconfigure.metrics.test.MetricsIntegrationTests")) {
                     	System.out.println(bestSequence);
 			System.out.println(testClassEndPoints.firstTestMethod + ", " +  testClassEndPoints.lastTestMethod);
