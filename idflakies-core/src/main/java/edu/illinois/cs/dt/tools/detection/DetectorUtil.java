@@ -22,7 +22,7 @@ import java.util.stream.Stream;
 public class DetectorUtil {
 
     public static TestRunResult originalResults(final List<String> originalOrder, final Runner runner) {
-        final int originalOrderTries = Configuration.config().getProperty("dt.detector.original_order.retry_count", 3);
+        final int originalOrderTries = Configuration.config().getProperty("dt.detector.original_order.retry_count", 0);
         final boolean allMustPass = Configuration.config().getProperty("dt.detector.original_order.all_must_pass", true);
 
         System.out.println("[INFO] Getting original results (" + originalOrder.size() + " tests).");
