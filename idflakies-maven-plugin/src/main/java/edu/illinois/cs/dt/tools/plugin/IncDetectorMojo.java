@@ -268,7 +268,10 @@ public class IncDetectorMojo extends DetectorMojo {
             for (int j = i + 1; j < testsInTestsToFields.size(); j++) {
                 String firstTest = testsInTestsToFields.get(i);
                 String secondTest = testsInTestsToFields.get(j);
-                if (!testsToFields.get(firstTest).retainAll(testsToFields.get(secondTest))) {
+		Set<String> firstSet = new HashSet<>(testsToFields.get(firstTest));
+		Set<String> secondSet = new HashSet<>(testsToFields.get(secondTest));
+                firstSet.retainAll(secondSet);
+		if (firstSet.size() == 0) {
                     continue;
                 }
                 String clzName0 = firstTest.substring(0, firstTest.lastIndexOf('.'));
