@@ -7,26 +7,26 @@ import edu.illinois.cs.dt.tools.detection.MavenDetectorPathManager;
 import edu.illinois.cs.dt.tools.detection.detectors.Detector;
 import edu.illinois.cs.dt.tools.detection.detectors.DetectorFactory;
 import edu.illinois.cs.dt.tools.runner.InstrumentingSmartRunner;
-import edu.illinois.cs.dt.tools.utility.ErrorLogger;
-import edu.illinois.cs.dt.tools.utility.GetMavenTestOrder;
-import edu.illinois.cs.dt.tools.utility.Level;
-import edu.illinois.cs.dt.tools.utility.Logger;
-import edu.illinois.cs.dt.tools.utility.OperationTime;
-import edu.illinois.cs.dt.tools.utility.PathManager;
-import edu.illinois.cs.dt.tools.utility.TestClassData;
+import edu.illinois.cs.dt.tools.utility.*;
 import edu.illinois.cs.testrunner.configuration.Configuration;
 import edu.illinois.cs.testrunner.data.framework.TestFramework;
 import edu.illinois.cs.testrunner.runner.Runner;
 import edu.illinois.cs.testrunner.runner.RunnerFactory;
 import edu.illinois.cs.testrunner.testobjects.TestLocator;
 
+import edu.illinois.cs.testrunner.util.ProjectWrapper;
+import edu.illinois.starts.helpers.Writer;
+import edu.illinois.starts.util.Pair;
+import org.apache.maven.artifact.DependencyResolutionRequiredException;
 import org.apache.maven.plugins.annotations.LifecyclePhase;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.ResolutionScope;
 import org.apache.maven.project.MavenProject;
 
+import org.apache.maven.surefire.booter.Classpath;
 import scala.collection.JavaConverters;
 
+import java.io.BufferedWriter;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -36,12 +36,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
+import java.util.*;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
@@ -54,6 +49,10 @@ public class DetectorMojo extends AbstractIDFlakiesMojo {
     private static Map<Integer, List<String>> locateTestList = new HashMap<>();
     // useful for modules with JUnit 4 tests but depend on something in JUnit 5
     private final boolean forceJUnit4 = Configuration.config().getProperty("dt.detector.forceJUnit4", false);
+
+    private Classpath sureFireClassPath;
+
+    protected static String SOOTDEPS = "soot-deps";
 
     // TODO: copy to eunomia
     private static ListEx<ListEx<String>> csv(final Path path) throws IOException {
@@ -220,6 +219,7 @@ public class DetectorMojo extends AbstractIDFlakiesMojo {
         Files.deleteIfExists(PathManager.timePath());
         Files.createDirectories(PathManager.cachePath());
         Files.createDirectories(PathManager.detectionResults());
+        getSurefireClassPath(mavenProject);
     }
 
     protected void loadTestRunners(final ErrorLogger logger, final MavenProject mavenProject) throws IOException {
@@ -276,14 +276,70 @@ public class DetectorMojo extends AbstractIDFlakiesMojo {
         }
     }
 
+    private void writeSootDeps(String artifactsDir, Map<String, Set<String>> sootDeps) {
+        String outFilename = Paths.get(artifactsDir, SOOTDEPS).toString();
+        try (BufferedWriter writer = Writer.getWriter(outFilename)) {
+            if (sootDeps != null) {
+                // we already computed the checksums while checking with old version in RunMojo#hasSameJarChecksum()
+                for (String key : sootDeps.keySet()) {
+                    writer.write(key + ": " + sootDeps.get(key).toString());
+                    writer.write(System.lineSeparator());
+                }
+            }
+        } catch (IOException ioe) {
+            ioe.printStackTrace();
+        }
+    }
+
+    protected Classpath getSurefireClassPath(final MavenProject project) {
+        long start = System.currentTimeMillis();
+        if (sureFireClassPath == null) {
+            // sureFireClassPath = new Classpath(project.get); // contains not just getTestClasspathElements()
+            try {
+                sureFireClassPath = new Classpath(project.getTestClasspathElements()); // AbstractSurefireMojo
+            } catch (DependencyResolutionRequiredException e) {
+                e.printStackTrace();
+            }
+        }
+        Logger.getGlobal().log(Level.FINEST, "SF-CLASSPATH: " + sureFireClassPath.getClassPath());
+        long end = System.currentTimeMillis();
+        Logger.getGlobal().log(Level.FINE, "[PROFILE] IncDetectorPlugin(getSureFireClassPath): "
+                + Writer.millsToSeconds(end - start));
+        return sureFireClassPath;
+    }
+
     protected List<String> getTests(
             final MavenProject project,
             TestFramework testFramework) throws IOException {
         return getOriginalOrder(project, testFramework);
     }
 
+    protected Map<String, List<String>> getTestClassesToTests(List<String> tests) {
+        Map<String, List<String>> testClassToMethod = new HashMap<>();
+        String delimiter = this.runner.framework().getDelimiter();
+        for (String test : tests) {
+            String className = test.substring(0, test.lastIndexOf(delimiter));
+            if (!testClassToMethod.containsKey(className)) {
+                testClassToMethod.put(className, new ArrayList<>());
+            }
+            testClassToMethod.get(className).add(test);
+        }
+        return testClassToMethod;
+    }
+
     protected Void detectorExecute(final ErrorLogger logger, final MavenProject mavenProject, final int rounds) throws IOException {
         final List<String> tests = getTests(mavenProject, this.runner.framework());
+        Map<String, List<String>> testClassToMethod = getTestClassesToTests(tests);
+        String cpString = Writer.pathToString(sureFireClassPath.getClassPath());
+        Map<String, Set<String>> sootDeps = new HashMap<>();
+        for (String testClass : testClassToMethod.keySet()) {
+            List<String> methods = testClassToMethod.get(testClass);
+            for (String method : methods) {
+                Set<String> affectedFields = SootAnalysis.analysisOnFields(cpString, testClass, method);
+                System.out.println("DEPENDENCIES: " + method + ": " + affectedFields.toString());
+                sootDeps.put(method, affectedFields);
+            }
+        }
 
         if (!tests.isEmpty()) {
             Files.createDirectories(outputPath);
