@@ -9,9 +9,14 @@ import edu.illinois.cs.dt.tools.utility.Logger;
 import edu.illinois.cs.dt.tools.utility.PathManager;
 import edu.illinois.cs.testrunner.configuration.Configuration;
 import edu.illinois.cs.testrunner.data.framework.TestFramework;
+import edu.illinois.starts.helpers.Cache;
+import edu.illinois.starts.helpers.Loadables;
+import edu.illinois.starts.helpers.RTSUtil;
 import edu.illinois.starts.helpers.Writer;
 import edu.illinois.starts.util.Pair;
 
+import edu.illinois.yasgl.DirectedGraph;
+import edu.illinois.yasgl.GraphUtils;
 import org.apache.commons.codec.binary.Hex;
 import org.apache.maven.artifact.DependencyResolutionRequiredException;
 import org.apache.maven.plugins.annotations.LifecyclePhase;
@@ -96,6 +101,10 @@ public class IncDetectorMojo extends DetectorMojo {
 
     private Set<Pair> crossClassPairSet;
 
+    private Set<Pair> pairSetOverThree;
+
+    private Set<Pair> pairSetOverTwo;
+
     private Set<Pair> classesPairSet;
 
     private static int[][] r;
@@ -116,6 +125,12 @@ public class IncDetectorMojo extends DetectorMojo {
 
     protected static String CLASS_EXTENSION = ".class";
 
+    protected String graphCache;
+
+    protected String graphFile;
+
+    protected static Loadables loadables;
+
     @Override
     public void execute() {
         superExecute();
@@ -126,7 +141,7 @@ public class IncDetectorMojo extends DetectorMojo {
 
         try {
             defineSettings(logger, mavenProject);
-	    String baseDir = mavenProject.getBasedir().toString();
+	        String baseDir = mavenProject.getBasedir().toString();
 	    if (!module.equals(".") && !baseDir.endsWith(module)) {
                 return;
             }
@@ -138,13 +153,16 @@ public class IncDetectorMojo extends DetectorMojo {
             return;
         }
 
-	long startTime = System.currentTimeMillis();
+	    long startTime = System.currentTimeMillis();
         try {
-
             allTestClasses = getTestClasses(mavenProject, this.runner.framework());
             allTestMethods = getTests(mavenProject, this.runner.framework());
-	    getPairs();
-	    getTestClassesToTests();
+            loadables = updateForNextRun();
+	        getPairs();
+	        if (pairSet.size() > 0) {
+	            return;
+            }
+	        getTestClassesToTests();
             storeOrdersByAsm();
             // storeOrders();
             writeNumOfOrders(orders, artifactsDir);
@@ -152,7 +170,7 @@ public class IncDetectorMojo extends DetectorMojo {
             e.printStackTrace();
         }
         
-	timing(startTime);
+	    timing(startTime);
         startTime = System.currentTimeMillis();
         logger.runAndLogError(() -> detectorExecute(logger, mavenProject, moduleRounds(coordinates)));
         timing(startTime);
@@ -196,10 +214,55 @@ public class IncDetectorMojo extends DetectorMojo {
         return fqn.replace(DOT, File.separator) + CLASS_EXTENSION;
     }
 
+    public Loadables updateForNextRun() {
+        String sfPathString = Writer.pathToString(sureFireClassPath.getClassPath());
+
+        List<String> allTests = allTestClasses;
+        List<String> classesToAnalyze = allTests;
+        Set<String> nonAffected = new HashSet<>();
+        Set<String> affectedTests = new HashSet<>(allTests);
+        affectedTests.removeAll(nonAffected);
+        DirectedGraph<String> graph = null;
+        Loadables loadables = null;
+
+        if (!affectedTests.isEmpty()) {
+            //TODO: set this boolean to true only for static reflectionAnalyses with * (border, string, naive)?
+            boolean computeUnreached = true;
+            loadables = prepareForNextRun(sfPathString, sureFireClassPath, classesToAnalyze, nonAffected, computeUnreached);
+            graph = loadables.getGraph();
+        }
+        RTSUtil.saveForNextRun(artifactsDir, graph, true, graphFile);
+
+        return loadables;
+    }
+
+    public Loadables prepareForNextRun(String sfPathString, Classpath sfClassPath, List<String> classesToAnalyze,
+                                       Set<String> nonAffected, boolean computeUnreached) {
+        File jdepsCache = new File(graphCache);
+        String m2Repo = "tmp"; // getLocalRepository().getBasedir(); // AbstractSurefireMojo
+
+        // Create the Loadables object early so we can use its helpers
+        Loadables loadables = new Loadables(classesToAnalyze, artifactsDir, sfPathString,
+                true, jdepsCache);
+        // Surefire Classpath object is easier to iterate over without de-constructing
+        // sfPathString (which we use in a number of other places)
+        loadables.setSurefireClasspath(sfClassPath);
+
+        Cache cache = new Cache(jdepsCache, m2Repo);
+        // 1. Load non-reflection edges from third-party libraries in the classpath
+        List<String> moreEdges = new ArrayList<>();
+
+        // 2. Get non-reflection edges from CUT and SDK; use (1) to build graph
+        loadables.create(new ArrayList<>(moreEdges), sfClassPath, computeUnreached);
+
+        return loadables;
+    }
+
     private void getPairs() {
         // System.out.println("PACKAGING: " + mavenProject.getModules());
         // System.exit(0);
-        Path path = relativePath(PathManager.modulePath(), Paths.get(pairsFile));
+        DirectedGraph<String> graph = loadables.getGraph();
+        Path path = Paths.get(pairsFile); // relativePath(PathManager.modulePath(), Paths.get(pairsFile));
         try {
             Set<String> fieldsList = new HashSet<>();
             Set<String> nonImmutableFields = new HashSet<>();
@@ -208,14 +271,14 @@ public class IncDetectorMojo extends DetectorMojo {
             while ((str = in.readLine()) != null) {
                 // System.out.println(str);
                 if (!str.contains(",")) {
-		    continue;
-		}
-		String test = str.substring(0, str.indexOf(','));
+		            continue;
+		        }
+                String test = str.substring(0, str.indexOf(','));
                 String field = str.substring(str.indexOf(',') + 1);
-		if (test.contains("[")) {
-		    test = test.substring(0, test.indexOf('['));
-		}	
-		if (!allTestMethods.contains(test)) {
+                if (test.contains("[")) {
+                    test = test.substring(0, test.indexOf('['));
+                }
+		        if (!allTestMethods.contains(test)) {
                     continue;
                 }
                 Set<String> fieldsSet = testsToFields.getOrDefault(test, new HashSet<>());
@@ -230,7 +293,7 @@ public class IncDetectorMojo extends DetectorMojo {
                     try {
                         String className = field.substring(0, field.lastIndexOf('.'));
                         String fieldName = field.substring(field.lastIndexOf('.') + 1);
-			Class clazz = loader.loadClass(className);
+			            Class clazz = loader.loadClass(className);
                         URL url = loader.getResource(toClassName(className));
                         if (url == null) {
                             continue;
@@ -268,20 +331,35 @@ public class IncDetectorMojo extends DetectorMojo {
             for (int j = i + 1; j < testsInTestsToFields.size(); j++) {
                 String firstTest = testsInTestsToFields.get(i);
                 String secondTest = testsInTestsToFields.get(j);
-		Set<String> firstSet = new HashSet<>(testsToFields.get(firstTest));
-		Set<String> secondSet = new HashSet<>(testsToFields.get(secondTest));
+		        Set<String> firstSet = new HashSet<>(testsToFields.get(firstTest));
+		        Set<String> secondSet = new HashSet<>(testsToFields.get(secondTest));
                 firstSet.retainAll(secondSet);
-		if (firstSet.size() == 0) {
+		        if (firstSet.size() == 0) {
                     continue;
+                }
+		        Set<String> clzSet = new HashSet<>();
+		        for (String f : firstSet) {
+                    clzSet.add(f.substring(0, f.lastIndexOf(".")));
                 }
                 String clzName0 = firstTest.substring(0, firstTest.lastIndexOf('.'));
                 String clzName1 = secondTest.substring(0, secondTest.lastIndexOf('.'));
+                int length1 = GraphUtils.computeShortestPath(graph, clzName0, clzSet).size();
+                int length2 = GraphUtils.computeShortestPath(graph, clzName1, clzSet).size();
+                // System.out.println(length1 + " " + length2);
                 if (!clzName0.equals(clzName1)) {
                     crossClassPairSet.add(new Pair<>(firstTest, secondTest));
                     crossClassPairSet.add(new Pair<>(secondTest, firstTest));
                 } else {
                     pairSet.add(new Pair<>(firstTest, secondTest));
                     pairSet.add(new Pair<>(secondTest, firstTest));
+                }
+                if (length1 > 2 || length2 > 2) {
+                    pairSetOverTwo.add(new Pair<>(firstTest, secondTest));
+                    pairSetOverTwo.add(new Pair<>(secondTest, firstTest));
+                }
+                if (length1 > 3 || length2 > 3) {
+                    pairSetOverThree.add(new Pair<>(firstTest, secondTest));
+                    pairSetOverThree.add(new Pair<>(secondTest, firstTest));
                 }
             }
         }
@@ -305,15 +383,17 @@ public class IncDetectorMojo extends DetectorMojo {
                 }
             }
         } */
-	writeNumOfPairs(artifactsDir, crossClassPairSet, "num-of-cross-class-pairs");
-	writePairs(artifactsDir, crossClassPairSet, "cross-class-pairs");
-	writeNumOfPairs(artifactsDir, pairSet, "num-of-intra-class-pairs");
-	writePairs(artifactsDir, pairSet, "intra-class-pairs");
-    	Set<Pair> allPairs = new HashSet<Pair>();
-	allPairs.addAll(crossClassPairSet);
-	allPairs.addAll(pairSet);
-	writeNumOfPairs(artifactsDir, allPairs, "num-of-all-pairs");
-	writePairs(artifactsDir, allPairs, "all-pairs");
+        writeNumOfPairs(artifactsDir, crossClassPairSet, "num-of-cross-class-pairs");
+        // writePairs(artifactsDir, crossClassPairSet, "cross-class-pairs");
+        writeNumOfPairs(artifactsDir, pairSet, "num-of-intra-class-pairs");
+        // writePairs(artifactsDir, pairSet, "intra-class-pairs");
+        Set<Pair> allPairs = new HashSet<Pair>();
+        allPairs.addAll(crossClassPairSet);
+        allPairs.addAll(pairSet);
+        writeNumOfPairs(artifactsDir, allPairs, "num-of-all-pairs");
+        // writePairs(artifactsDir, allPairs, "all-pairs");
+        writeNumOfPairs(artifactsDir, pairSetOverThree, "num-of-o3-pairs");
+        writeNumOfPairs(artifactsDir, pairSetOverTwo, "num-of-o2-pairs");
     }
 
     protected void getTestClassesToTests() {
@@ -376,12 +456,7 @@ public class IncDetectorMojo extends DetectorMojo {
 
         List<String> bestTestSequence = new LinkedList<>();
 
-        // System.out.println(endpoints.firstTestMethod + ", " + endpoints.lastTestMethod);
-        // System.out.println("TESTS SIZE: " + testsSize);
-        // System.out.println("REMAINING PAIRS: " + pairs.size());
-
         while (alreadySelectedTests.size() < testsSize) {
-            // System.out.println("START: " + firstTestMethod + ", " + lastTestMethod);
             if (!firstTestMethod.equals("")) {
                 // Trying to link from first method as long as possible
                 alreadySelectedTests.add(firstTestMethod);
@@ -448,8 +523,6 @@ public class IncDetectorMojo extends DetectorMojo {
         }
         testMethodOrder.addAll(firstTestMethodOrder);
         testMethodOrder.addAll(secondTestMethodOrder);
-        // System.out.println("EQUAL: " + (testMethodOrder.size() == testsSize));
-        // System.out.println("METHOD SIZE: " + testMethodOrder.size() + "," + testsSize);
         return testMethodOrder;
     }
 
@@ -510,51 +583,6 @@ public class IncDetectorMojo extends DetectorMojo {
         return bestSequence;
     }
 
-    /* private List<String> findBestNextTestSequence(String test, Set<Pair<String, String>> pairs, String lastTest, Set<String> alreadySelectedTests, boolean reverse) {
-        List<String> bestSequence = new LinkedList<>();
-        // bestSequence.add(test)
-        for (Pair<String, String> pair : pairs) {
-            // Consider next link based on what pairs need to be covered
-            // Next link depends on which direction we are going, forward or backward (reverse)
-            String candidateTest = null;
-            if (reverse) {
-                // from right to left
-                if (pair.getValue().equals(test)) {
-                    candidateTest = pair.getKey();
-                }
-            } else {
-                // from left to right
-                if (pair.getKey().equals(test)) {
-                    candidateTest = pair.getValue();
-                }
-            }
-            if (candidateTest == null) {
-                continue;
-            }
-            // Do not link further if already seen this test before or it is the last test based on the endpoint
-            if (alreadySelectedTests.contains(candidateTest) || candidateTest.equals(lastTest)) {
-                continue;
-            }
-            Set<Pair<String, String>> newPairs = new HashSet<>(pairs);
-            newPairs.remove(pair);
-            Set<String> newAlreadySelectedTests = new HashSet<>(alreadySelectedTests);
-            newAlreadySelectedTests.add(candidateTest);
-            // Try one step further to search for the best sequence assuming linking forward with this candidate test
-            List<String> potentialNextBestSequence = findBestNextTestSequence(candidateTest, newPairs, lastTest, newAlreadySelectedTests, reverse);
-            if (potentialNextBestSequence.size() > bestSequence.size()) {
-                bestSequence = potentialNextBestSequence;
-                System.out.println("TMP: " + test + ":" + bestSequence);
-            }
-        }
-        // Return the best sequence that involves the longest sequence going further, but now including the test at the beginning (or end for reverse)
-        if (reverse) {
-            bestSequence.add(test);
-        } else {
-            bestSequence.add(0, test);
-        }
-        return bestSequence;
-    } */
-
     private void storeOrdersByAsm() {
         orders = new LinkedList<>();
 
@@ -573,7 +601,6 @@ public class IncDetectorMojo extends DetectorMojo {
         Collections.sort(occurrenceSortedList, (o1, o2) -> (o2.getValue().size() - o1.getValue().size()));
 
         Set<Pair> remainingCrossClassPairs = new HashSet<>(crossClassPairSet);
-        // System.out.println("CLAZZSIZE: " + clazzSize);
         while (!remainingCrossClassPairs.isEmpty() || !remainingPairs.isEmpty()) {
             List<String> tmpClassOrder = new LinkedList<>();
             Map<String, TestClassEndPoints> testClassEndPointsMap = new HashMap<>();
@@ -587,17 +614,12 @@ public class IncDetectorMojo extends DetectorMojo {
             boolean rightEnd = false;
             System.out.println("CrossPairsSize: " + remainingCrossClassPairs.size());
             System.out.println("IntraPairsSize: " + remainingPairs.size());
-            /* if (remainingPairs.size() == 2) {
-	    	System.out.println(remainingPairs);
-	    } */
 	    while (processedClasses.size() < clazzSize) {
                 Pair pair1 = new Pair("", "");
                 if (!leftEnd) {
                     pair1 = getPairs(sequence, tmpClassOrder, lastLeftAddedTest, remainingCrossClassPairs, processedClasses, true);
                 }
                 if (!pair1.toString().equals("=")) {
-                    // System.out.println("lastLeftAddedTest: " + lastLeftAddedTest);
-                    // System.out.println("PAIR1: " + pair1.toString());
                     remainingCrossClassPairs.remove(pair1);
                     if (sequence.contains(lastLeftAddedTest)) {
                         leftIndex = sequence.indexOf(lastLeftAddedTest);
@@ -1078,7 +1100,7 @@ public class IncDetectorMojo extends DetectorMojo {
         super.defineSettings(logger, project);
 
         pairsFile = Configuration.config().getProperty("dt.asm.pairsfile", "");
- 	module = Configuration.config().getProperty("dt.asm.module", "");	
+        module = Configuration.config().getProperty("dt.asm.module", "");
 
         artifactsDir = getArtifactsDir();
         testsToFields = new HashMap();
@@ -1086,11 +1108,16 @@ public class IncDetectorMojo extends DetectorMojo {
 
         pairSet = new HashSet<>();
         crossClassPairSet = new HashSet<>();
+        pairSetOverThree = new HashSet<>();
+        pairSetOverTwo = new HashSet<>();
 
         getImmutableList();
 
         getSureFireClassPath(project);
         loader = createClassLoader(sureFireClassPath);
+
+        graphCache = "starts-cache";
+        graphFile = "starts-graph";
         // getPairs();
         // System.out.println(crossClassPairSet.size());
         // System.out.println(pairSet.size());
@@ -1156,32 +1183,6 @@ public class IncDetectorMojo extends DetectorMojo {
             }
         }
         return classes;
-    }
-
-    /**
-     * Compute the checksum for the given map and return the jar
-     * and the checksum as a string.
-     *
-     * @param jar  The jar whose checksum we need to compute.
-     */
-    private Pair<String, String> getJarToChecksumMapping(String jar) {
-        Pair<String, String> pair = new Pair<>(jar, "-1");
-        byte[] bytes;
-        int bufSize = 65536 * 2;
-        try {
-            MessageDigest md = MessageDigest.getInstance("MD5");
-            InputStream is = Files.newInputStream(Paths.get(jar));
-            bytes = new byte[bufSize];
-            int size = is.read(bytes, 0, bufSize);
-            while (size >= 0) {
-                md.update(bytes, 0, size);
-                size = is.read(bytes, 0, bufSize);
-            }
-            pair = new Pair<>(jar, Hex.encodeHexString(md.digest()));
-        } catch (IOException | NoSuchAlgorithmException e) {
-            e.printStackTrace();
-        }
-        return pair;
     }
 
     private void getImmutableList() {
