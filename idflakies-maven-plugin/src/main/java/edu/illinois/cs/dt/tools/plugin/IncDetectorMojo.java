@@ -240,7 +240,7 @@ public class IncDetectorMojo extends DetectorMojo {
                                        Set<String> nonAffected, boolean computeUnreached) {
         File jdepsCache = new File(graphCache);
         String m2Repo = "tmp"; // getLocalRepository().getBasedir(); // AbstractSurefireMojo
-
+        File libraryFile = new File(jdepsCache, "jdk.graph");
         // Create the Loadables object early so we can use its helpers
         Loadables loadables = new Loadables(classesToAnalyze, artifactsDir, sfPathString,
                 true, jdepsCache);
@@ -249,20 +249,21 @@ public class IncDetectorMojo extends DetectorMojo {
         loadables.setSurefireClasspath(sfClassPath);
 
         Cache cache = new Cache(jdepsCache, m2Repo);
-        // 1. Load non-reflection edges from third-party libraries in the classpath
-        List<String> moreEdges = new ArrayList<>();
+        // 1. Load non-reflection edges from third-party libraries in the classpath        
+	List<String> moreEdges = new ArrayList<>();
+        cache.loadM2EdgesFromCache(moreEdges, sfPathString);
 
-        // 2. Get non-reflection edges from CUT and SDK; use (1) to build graph
+	// 2. Get non-reflection edges from CUT and SDK; use (1) to build graph
         loadables.create(new ArrayList<>(moreEdges), sfClassPath, computeUnreached);
-
-        return loadables;
+        
+	return loadables;
     }
 
     private void getPairs() {
         // System.out.println("PACKAGING: " + mavenProject.getModules());
         // System.exit(0);
         DirectedGraph<String> graph = loadables.getGraph();
-        Path path = Paths.get(pairsFile); // relativePath(PathManager.modulePath(), Paths.get(pairsFile));
+        Path path = relativePath(PathManager.modulePath(), Paths.get(pairsFile));
         try {
             Set<String> fieldsList = new HashSet<>();
             Set<String> nonImmutableFields = new HashSet<>();
