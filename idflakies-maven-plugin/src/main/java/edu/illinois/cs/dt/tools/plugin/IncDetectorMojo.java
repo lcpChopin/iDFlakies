@@ -20,6 +20,7 @@ import edu.illinois.yasgl.GraphUtils;
 import org.apache.commons.codec.binary.Hex;
 import org.apache.maven.artifact.DependencyResolutionRequiredException;
 import org.apache.maven.plugins.annotations.LifecyclePhase;
+import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.ResolutionScope;
 import org.apache.maven.project.MavenProject;
@@ -124,9 +125,11 @@ public class IncDetectorMojo extends DetectorMojo {
     protected static String DOT = ".";
 
     protected static String CLASS_EXTENSION = ".class";
-
+    
+    @Parameter(property = "gCache", defaultValue = "${basedir}${file.separator}jdeps-cache")
     protected String graphCache;
 
+    @Parameter(defaultValue = "graph", readonly = true, required = true)
     protected String graphFile;
 
     protected static Loadables loadables;
@@ -239,7 +242,7 @@ public class IncDetectorMojo extends DetectorMojo {
     public Loadables prepareForNextRun(String sfPathString, Classpath sfClassPath, List<String> classesToAnalyze,
                                        Set<String> nonAffected, boolean computeUnreached) {
         File jdepsCache = new File(graphCache);
-        String m2Repo = "tmp"; // getLocalRepository().getBasedir(); // AbstractSurefireMojo
+        String m2Repo = "~/.m2/"; // getLocalRepository().getBasedir(); // AbstractSurefireMojo
         File libraryFile = new File(jdepsCache, "jdk.graph");
         // Create the Loadables object early so we can use its helpers
         Loadables loadables = new Loadables(classesToAnalyze, artifactsDir, sfPathString,
@@ -251,7 +254,11 @@ public class IncDetectorMojo extends DetectorMojo {
         Cache cache = new Cache(jdepsCache, m2Repo);
         // 1. Load non-reflection edges from third-party libraries in the classpath        
 	List<String> moreEdges = new ArrayList<>();
-        cache.loadM2EdgesFromCache(moreEdges, sfPathString);
+	try {
+            cache.loadM2EdgesFromCache(moreEdges, sfPathString);
+	} catch (Exception ex) {
+	} catch (Error er) {
+	}
 
 	// 2. Get non-reflection edges from CUT and SDK; use (1) to build graph
         loadables.create(new ArrayList<>(moreEdges), sfClassPath, computeUnreached);
